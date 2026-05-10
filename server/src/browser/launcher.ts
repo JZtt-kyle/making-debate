@@ -15,19 +15,53 @@ const CHROME_PATHS_MAC = [
 
 const CHROME_PATHS_LINUX = [
   '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
   '/usr/bin/chromium-browser',
   '/usr/bin/chromium',
+  '/snap/bin/chromium',
   '/usr/bin/microsoft-edge',
+  '/usr/bin/microsoft-edge-stable',
 ]
 
+function chromePathsWin(): string[] {
+  const programFiles    = process.env['ProgramFiles']      ?? 'C:\\Program Files'
+  const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'
+  const localAppData    = process.env['LOCALAPPDATA']      ?? join(homedir(), 'AppData', 'Local')
+  return [
+    join(programFiles,    'Google', 'Chrome', 'Application', 'chrome.exe'),
+    join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    join(localAppData,    'Google', 'Chrome', 'Application', 'chrome.exe'),
+    join(programFiles,    'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    join(localAppData,    'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    join(programFiles,    'Chromium', 'Application', 'chrome.exe'),
+  ]
+}
+
 function findBrowserBinary(): string {
-  const candidates = process.platform === 'linux' ? CHROME_PATHS_LINUX : CHROME_PATHS_MAC
+  const candidates =
+    process.platform === 'win32' ? chromePathsWin() :
+    process.platform === 'linux' ? CHROME_PATHS_LINUX :
+                                   CHROME_PATHS_MAC
   for (const p of candidates) {
     if (existsSync(p)) return p
   }
   throw new Error(
-    'No Chrome/Edge installation found. Install Google Chrome or Microsoft Edge.'
+    `No Chrome/Edge/Chromium installation found on ${process.platform}. ` +
+    `Install Google Chrome or Microsoft Edge, or set BROWSER_BINARY env var.`
   )
+}
+
+// Allow override via env var (useful for non-standard installs / portable Chrome)
+function resolveBrowserBinary(): string {
+  const override = process.env.BROWSER_BINARY
+  if (override) {
+    if (!existsSync(override)) {
+      throw new Error(`BROWSER_BINARY="${override}" does not exist`)
+    }
+    return override
+  }
+  return findBrowserBinary()
 }
 
 async function isPortFree(port: number): Promise<boolean> {
@@ -70,7 +104,7 @@ export async function launchBrowser(): Promise<BrowserLaunchResult> {
     mkdirSync(PROFILE_DIR, { recursive: true })
   }
 
-  const binary = findBrowserBinary()
+  const binary = resolveBrowserBinary()
   const port = await findAvailablePort(BASE_PORT)
 
   const args = [

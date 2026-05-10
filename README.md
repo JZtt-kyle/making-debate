@@ -30,9 +30,9 @@ UI 走 **编辑部美学（Editorial）**：暖墨黑底 + 米色印纸文本，
 
 ### 前置要求
 
-- macOS（Linux/Windows 待支持，CDP 启动逻辑需调整路径）
-- Node.js ≥ 22.5（用 `node:sqlite`，不需要原生编译）
-- Chrome 或 Edge 浏览器
+- **macOS · Linux · Windows** 任一（首次启动会用独立 user-data-dir 接管 Chrome / Edge / Chromium）
+- Node.js ≥ 22.5（用 `node:sqlite`，无需原生编译）
+- Chrome / Edge / Chromium 任一（自动按平台默认路径查找；非标准安装可设 `BROWSER_BINARY=/path/to/chrome` 环境变量覆盖）
 - ChatGPT、Claude、DeepSeek 三家账号
 
 ### 安装
@@ -151,9 +151,23 @@ making-debate/
 
 ## 已知限制
 
-- 仅在 macOS + Chrome 下验证；Windows / Linux / Edge 路径需要自行调整 launcher
-- 站点 selector 是按 2026-05 的 DOM 写的，UI 改版后需要更新对应 adapter
+- 仅在 **macOS + Chrome** 下完整验证；Linux / Windows 二进制查找路径已实现但**未实测**，遇问题可设 `BROWSER_BINARY` 环境变量绕过路径探测
+- 站点 selector 是按 2026-05 的 DOM 写的，UI 改版后需要更新对应 adapter（`server/src/browser/adapters/*.ts` 顶部 `SEL` 常量）
 - 单进程同一时间只能跑 1 场辩论（多场会争抢三个浏览器 tab，未做排队）
+
+### 浏览器路径自动查找
+
+| 平台 | 默认查找的二进制 |
+|---|---|
+| macOS | `/Applications/Google Chrome.app/...`、`Microsoft Edge.app`、`Chromium.app` |
+| Linux | `/usr/bin/google-chrome[-stable]`、`chromium[-browser]`、`/snap/bin/chromium`、`microsoft-edge[-stable]` |
+| Windows | `Program Files\Google\Chrome\...\chrome.exe`、Program Files (x86)、`%LOCALAPPDATA%`、Edge 同样三处、Chromium |
+
+非标准安装（便携版 / 自编译 / WSL 路径）请直接：
+
+```bash
+BROWSER_BINARY=/your/custom/path/chrome npm run dev
+```
 
 ## 致谢
 
