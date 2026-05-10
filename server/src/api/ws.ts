@@ -1,0 +1,39 @@
+import { WebSocketServer, WebSocket } from 'ws'
+import { IncomingMessage } from 'http'
+import { Server } from 'http'
+import { WSEvent } from '../orchestrator/debate.js'
+
+export type WsClients = Map<string, Set<(event: WSEvent) => void>>
+
+export function attachWebSocket(server: Server): WsClients {
+  const wss = new WebSocketServer({ server, path: '/ws' })
+  const clients: WsClients = new Map()
+
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    // expect path like /ws/debates/:id
+    const match = req.url?.match(/\/ws\/debates\/([^/]+)/)
+    if (!match) {
+      ws.close(1008, 'invalid path')
+      return
+    }
+    const debateId = match[1]
+
+    if (!clients.has(debateId)) clients.set(debateId, new Set())
+    const emit = (event: WSEvent) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(event))
+      }
+    }
+    clients.get(debateId)!.add(emit)
+
+    ws.on('close', () => {
+      clients.get(debateId)?.delete(emit)
+    })
+
+    ws.on('error', () => {
+      clients.get(debateId)?.delete(emit)
+    })
+  })
+
+  return clients
+}

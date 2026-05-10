@@ -1,0 +1,14 @@
+{
+  "name": "making-debate",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "smoke": "npm run smoke -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
