@@ -6,7 +6,9 @@ import { WSEvent } from '../orchestrator/debate.js'
 export type WsClients = Map<string, Set<(event: WSEvent) => void>>
 
 export function attachWebSocket(server: Server): WsClients {
-  const wss = new WebSocketServer({ server, path: '/ws' })
+  // No `path` option: ws's path option is a strict match, but we want to
+  // accept any /ws/debates/:id path. The regex below does the routing.
+  const wss = new WebSocketServer({ server })
   const clients: WsClients = new Map()
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {

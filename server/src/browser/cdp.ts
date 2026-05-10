@@ -8,6 +8,18 @@ const SITE_URLS: Record<SiteName, string> = {
   deepseek: 'https://chat.deepseek.com',
 }
 
+// Each site's login-page URL fragment (when NOT logged in)
+const LOGIN_URL_FRAGMENTS: Record<SiteName, string[]> = {
+  chatgpt: [],                         // ChatGPT stays at / even when logged out — use DOM check
+  claude: ['/login'],
+  deepseek: ['/sign_in', '/signin'],
+}
+
+// DOM selector that is present ONLY when logged out
+const LOGGED_OUT_SELECTOR: Partial<Record<SiteName, string>> = {
+  chatgpt: 'button[data-testid="login-button"]',
+}
+
 export class CDPSession {
   private browser!: Browser
   private context!: BrowserContext
@@ -44,9 +56,22 @@ export class CDPSession {
   async checkLoginStatus(site: SiteName): Promise<boolean> {
     try {
       const page = await this.ensurePage(site)
+      await page.waitForLoadState('domcontentloaded').catch(() => {})
+
       const url = page.url()
-      const loginIndicators = ['/login', '/signin', '/auth', 'accounts.google']
-      return !loginIndicators.some(i => url.includes(i))
+
+      // URL-based check
+      const fragments = LOGIN_URL_FRAGMENTS[site]
+      if (fragments.length > 0 && fragments.some(f => url.includes(f))) return false
+
+      // DOM-based check
+      const loggedOutSel = LOGGED_OUT_SELECTOR[site]
+      if (loggedOutSel) {
+        const loggedOutEl = await page.$(loggedOutSel)
+        if (loggedOutEl) return false
+      }
+
+      return true
     } catch {
       return false
     }

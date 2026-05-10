@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS debates (
   synthesizer TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at INTEGER NOT NULL,
-  completed_at INTEGER
+  completed_at INTEGER,
+  deepseek_config TEXT NOT NULL DEFAULT '{"mode":"fast","deepThink":false,"smartSearch":false}',
+  claude_config TEXT NOT NULL DEFAULT '{"model":"sonnet-4-6"}'
 );
 
 CREATE TABLE IF NOT EXISTS messages (

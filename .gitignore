@@ -1,6 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 server/dist/
 web/dist/
+*.tsbuildinfo
+
+# Local data
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 .env
+.env.local
+
+# Editor / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Local agent / dev artifacts
+.claude/
+.playwright-mcp/

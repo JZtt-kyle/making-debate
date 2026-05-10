@@ -19,6 +19,18 @@ const schemaPath = join(dirname(fileURLToPath(import.meta.url)), 'schema.sql')
 const schema = readFileSync(schemaPath, 'utf-8')
 _db.exec(schema)
 
+// Migrate existing databases that predate config columns
+for (const col of ['deepseek_config', 'claude_config']) {
+  try {
+    _db.exec(`ALTER TABLE debates ADD COLUMN ${col} TEXT NOT NULL DEFAULT '{}'`)
+  } catch { /* column already exists */ }
+}
+
+// Orphan cleanup: any debate stuck at 'pending'/'running' belongs to a previous
+// server process (it can't be in-flight on a freshly-started server). Mark them
+// as 'error' so the UI shows whatever partial messages were captured.
+_db.exec(`UPDATE debates SET status = 'error' WHERE status IN ('pending', 'running')`)
+
 // Minimal wrapper matching the better-sqlite3 API used in the codebase
 export const db = {
   prepare(sql: string) {

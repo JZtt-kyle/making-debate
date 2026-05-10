@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
 
-const MODEL_COLORS: Record<ModelName, string> = {
-  claude: 'var(--claude)',
-  chatgpt: 'var(--chatgpt)',
-  deepseek: 'var(--deepseek)',
+const MODEL_TONE: Record<ModelName, { rule: string; faint: string; display: string; latin: string }> = {
+  claude:   { rule: 'var(--ochre)', faint: 'var(--ochre-faint)', display: 'Claude',   latin: 'Anthropic' },
+  chatgpt:  { rule: 'var(--sage)',  faint: 'var(--sage-faint)',  display: 'ChatGPT',  latin: 'OpenAI'    },
+  deepseek: { rule: 'var(--azure)', faint: 'var(--azure-faint)', display: 'DeepSeek', latin: 'Hangzhou'  },
 }
 
+const PHASE_ROMAN: Record<DebatePhase, string> = { 1: 'I', 2: 'II', 3: 'III', 4: 'IV' }
 const PHASE_LABELS: Record<DebatePhase, string> = {
   1: '开题',
   2: '初步方案',
@@ -23,68 +25,159 @@ interface Props {
 
 export default function ColumnStream({ model, streams, isActive }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const tone = MODEL_TONE[model]
 
+  // Smooth auto-scroll only while streaming
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const lastStream = streams[streams.length - 1]
+    if (lastStream && !lastStream.complete) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
   }, [streams])
 
-  const color = MODEL_COLORS[model]
+  const isWriting = isActive && streams.some(s => !s.complete)
 
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-      border: `1px solid ${isActive ? color : 'var(--border)'}`,
-      borderRadius: 10, overflow: 'hidden',
-      transition: 'border-color 0.3s',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      minHeight: 0,
+      borderLeft: `1px solid ${isActive ? tone.rule : 'var(--rule)'}`,
+      paddingLeft: '1.4rem',
+      transition: 'border-color 0.4s',
+      position: 'relative',
     }}>
-      <div style={{
-        padding: '0.7rem 1rem',
-        background: 'var(--surface)',
-        borderBottom: `2px solid ${color}`,
-        display: 'flex', alignItems: 'center', gap: '0.5rem',
+      {/* Column header — editorial byline */}
+      <header style={{
+        paddingBottom: '0.85rem',
+        marginBottom: '1.1rem',
+        borderBottom: '1px solid var(--rule)',
       }}>
         <div style={{
-          width: 10, height: 10, borderRadius: '50%', background: color,
-          boxShadow: isActive ? `0 0 6px ${color}` : 'none',
-          transition: 'box-shadow 0.3s',
-        }} />
-        <span style={{ fontWeight: 700, letterSpacing: '0.03em', color }}>
-          {model === 'chatgpt' ? 'ChatGPT' : model.charAt(0).toUpperCase() + model.slice(1)}
-        </span>
-        {isActive && (
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
-            生成中...
-          </span>
-        )}
-      </div>
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: '0.6rem',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--serif-display)',
+            fontStyle: 'italic',
+            fontWeight: 500,
+            fontSize: 22,
+            color: tone.rule,
+            letterSpacing: '-0.01em',
+            lineHeight: 1,
+          }}>
+            {tone.display}
+          </h3>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+          {isWriting && (
+            <span style={{
+              marginLeft: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              fontFamily: 'var(--mono)',
+              fontSize: 10,
+              letterSpacing: '0.16em',
+              textTransform: 'uppercase',
+              color: tone.rule,
+            }}>
+              <span className="writing-pulse" style={{ background: tone.rule }} />
+              落笔中
+            </span>
+          )}
+        </div>
+
+        <div style={{
+          marginTop: '0.35rem',
+          fontFamily: 'var(--mono)',
+          fontSize: 10,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: 'var(--paper-faint)',
+        }}>
+          {tone.latin} · 第 {streams.length || 0} 篇手稿
+        </div>
+      </header>
+
+      {/* Body — flowing streams */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        paddingRight: '0.4rem',
+      }}>
         {streams.length === 0 && (
-          <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>等待中...</p>
+          <p style={{
+            fontFamily: 'var(--serif-body)',
+            fontStyle: 'italic',
+            fontSize: 14,
+            color: 'var(--paper-faint)',
+            marginTop: '0.5rem',
+          }}>
+            尚未发言。
+          </p>
         )}
+
         {streams.map((stream, i) => (
-          <div key={i} style={{ marginBottom: '1.5rem' }}>
+          <article key={i} style={{ marginBottom: '2.2rem' }} className="fade-up">
+            {/* Chapter mark — Roman numeral + label */}
             <div style={{
-              fontSize: 11, fontWeight: 600, color, marginBottom: '0.5rem',
-              textTransform: 'uppercase', letterSpacing: '0.08em',
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: '0.55rem',
+              marginBottom: '0.65rem',
+              paddingBottom: '0.45rem',
+              borderBottom: `1px solid ${tone.faint}`,
             }}>
-              {PHASE_LABELS[stream.phase] ?? `阶段 ${stream.phase}`}
-            </div>
-            <div style={{
-              fontSize: 14, lineHeight: 1.7, color: 'var(--text)',
-              fontFamily: 'inherit',
-            }}>
-              <ReactMarkdown>{stream.content}</ReactMarkdown>
-              {!stream.complete && stream.content && (
-                <span style={{ color, animation: 'blink 1s step-start infinite' }}>▍</span>
+              <span style={{
+                fontFamily: 'var(--serif-display)',
+                fontStyle: 'italic',
+                fontSize: 17,
+                color: tone.rule,
+                fontFeatureSettings: '"onum" 1',
+                lineHeight: 1,
+              }}>
+                {PHASE_ROMAN[stream.phase]}
+              </span>
+              <span style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 10,
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                color: 'var(--paper-mute)',
+              }}>
+                {PHASE_LABELS[stream.phase]}
+              </span>
+              {!stream.complete && (
+                <span style={{
+                  marginLeft: 'auto',
+                  fontFamily: 'var(--mono)',
+                  fontSize: 9,
+                  letterSpacing: '0.18em',
+                  textTransform: 'uppercase',
+                  color: tone.rule,
+                  opacity: 0.7,
+                }}>
+                  撰写中
+                </span>
               )}
             </div>
-          </div>
+
+            {/* The actual text — Newsreader serif, editorial body */}
+            <div className="prose">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {stream.content}
+              </ReactMarkdown>
+              {!stream.complete && stream.content && (
+                <span className="caret" style={{ background: tone.rule }} />
+              )}
+            </div>
+          </article>
         ))}
         <div ref={bottomRef} />
       </div>
-
-      <style>{`@keyframes blink { 50% { opacity: 0 } }`}</style>
     </div>
   )
 }

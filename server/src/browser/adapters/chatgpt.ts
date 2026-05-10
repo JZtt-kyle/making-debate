@@ -1,12 +1,15 @@
 import { Page } from 'playwright'
 import { SiteAdapter, waitFor } from './base.js'
 
+// All ChatGPT selectors — update here if UI changes
 const SEL = {
-  newChatButton: 'a[href="/"], nav button:has-text("New chat"), [data-testid="create-new-chat-button"]',
-  inputBox: '#prompt-textarea, [contenteditable="true"][placeholder]',
-  sendButton: '[data-testid="send-button"], button[aria-label="Send prompt"]',
-  stopButton: 'button[aria-label="Stop streaming"]',
-  lastAssistantMessage: '[data-message-author-role="assistant"]:last-child .markdown',
+  newChatButton: '[data-testid="create-new-chat-button"]',
+  inputBox: '#prompt-textarea',
+  sendButton: '[data-testid="send-button"]',
+  // During streaming, ChatGPT adds data-stream-active to a root element
+  streamingIndicator: '[data-stream-active]',
+  assistantMessage: '[data-message-author-role="assistant"]',
+  responseContent: '[data-message-author-role="assistant"] .markdown, [data-message-author-role="assistant"] .prose',
 }
 
 export class ChatGPTAdapter implements SiteAdapter {
@@ -18,7 +21,8 @@ export class ChatGPTAdapter implements SiteAdapter {
   }
 
   async ensureReady(): Promise<void> {
-    if (!this.page.url().startsWith('https://chatgpt.com') && !this.page.url().startsWith('https://chat.openai.com')) {
+    const url = this.page.url()
+    if (!url.startsWith('https://chatgpt.com') && !url.startsWith('https://chat.openai.com')) {
       await this.page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded' })
     }
     await this.page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {})
@@ -35,62 +39,75 @@ export class ChatGPTAdapter implements SiteAdapter {
       await this.page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded' })
       await waitFor(800)
     }
+    await this.page.locator(SEL.inputBox).waitFor({ timeout: 10_000 }).catch(() => {})
   }
 
   async sendMessage(text: string): Promise<void> {
     const input = this.page.locator(SEL.inputBox).first()
     await input.waitFor({ timeout: 10_000 })
-    await input.click()
-    await waitFor(200)
-
-    await this.page.evaluate((t) => {
-      const el = document.querySelector('#prompt-textarea, [contenteditable="true"][placeholder]') as HTMLElement
-      if (el) {
-        el.focus()
-        if (el.tagName === 'TEXTAREA') {
-          ;(el as HTMLTextAreaElement).value = t
-          el.dispatchEvent(new Event('input', { bubbles: true }))
-        } else {
-          document.execCommand('selectAll', false)
-          document.execCommand('insertText', false, t)
-        }
-      }
-    }, text)
-
-    await waitFor(400)
+    await input.fill(text)
+    await waitFor(300)
     const sendBtn = this.page.locator(SEL.sendButton).first()
     await sendBtn.waitFor({ timeout: 5000 })
     await sendBtn.click()
   }
 
   async streamResponse(onDelta: (chunk: string) => void): Promise<string> {
-    await this.page.locator(SEL.stopButton).waitFor({ timeout: 30_000 }).catch(() => {})
+    const HARD_TIMEOUT = Date.now() + 5 * 60 * 1000
 
-    let lastText = ''
-    const getText = async (): Promise<string> => {
-      return this.page.evaluate(() => {
-        const messages = document.querySelectorAll('[data-message-author-role="assistant"]')
-        const last = messages[messages.length - 1]
-        return last?.querySelector('.markdown')?.textContent ?? last?.textContent ?? ''
+    const countMsgs = (): Promise<number> =>
+      this.page.evaluate(() =>
+        document.querySelectorAll('[data-message-author-role="assistant"]').length
+      )
+
+    const getText = (): Promise<string> =>
+      this.page.evaluate(() => {
+        const msgs = document.querySelectorAll('[data-message-author-role="assistant"]')
+        const last = msgs[msgs.length - 1]
+        if (!last) return ''
+        const md = last.querySelector('.markdown, .prose')
+        return ((md ?? last) as HTMLElement).innerText ?? (md ?? last).textContent ?? ''
       })
+
+    const isStreaming = (): Promise<boolean> =>
+      this.page.evaluate(() => !!document.querySelector('[data-stream-active]'))
+
+    // Baseline: messages already present before this send (same-session continuity)
+    const baselineCount = await countMsgs()
+
+    // Phase 1: wait for a NEW assistant message beyond the baseline
+    const deadline1 = Date.now() + 30_000
+    while (Date.now() < deadline1) {
+      if (await countMsgs() > baselineCount) break
+      await waitFor(300)
     }
 
-    while (true) {
+    // Phase 2: stream content until data-stream-active disappears
+    let lastText = ''
+    let lastChangeAt = Date.now()
+
+    while (Date.now() < HARD_TIMEOUT) {
       const current = await getText()
       if (current !== lastText) {
         const delta = current.slice(lastText.length)
         if (delta) onDelta(delta)
         lastText = current
+        lastChangeAt = Date.now()
       }
 
-      const stopVisible = await this.page.locator(SEL.stopButton).isVisible().catch(() => false)
-      if (!stopVisible) {
-        await waitFor(500)
+      const streaming = await isStreaming()
+
+      if (!streaming) {
+        // Double-check: give 1s for any trailing content
+        await waitFor(1000)
         const final = await getText()
         if (final !== lastText) onDelta(final.slice(lastText.length))
-        return final
+        return final || lastText
       }
+
       await waitFor(300)
     }
+
+    return lastText
   }
 }
