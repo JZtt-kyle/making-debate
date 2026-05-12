@@ -4,9 +4,10 @@ import ModelPanel from '../ModelPanel.tsx'
 
 // Generic 3-column grid used by Phase II and Phase IV.
 // Each ModelPanel inside self-caps height and provides per-column expand.
-export default function ThreeColumns({ panels, isActivePhase }: {
+export default function ThreeColumns({ panels, isActivePhase, onRefetch }: {
   panels: Partial<Record<ModelName, ModelStream | null>>
   isActivePhase: boolean
+  onRefetch?: (model: ModelName) => void
 }) {
   return (
     <div style={{
@@ -20,6 +21,7 @@ export default function ThreeColumns({ panels, isActivePhase }: {
           model={m}
           stream={panels[m] ?? null}
           isActivePhase={isActivePhase}
+          onRefetch={onRefetch ? () => onRefetch(m) : undefined}
         />
       ))}
     </div>

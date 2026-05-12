@@ -125,6 +125,29 @@ export class DeepSeekAdapter implements SiteAdapter {
     }
   }
 
+  async readLastAssistantMessage(): Promise<string> {
+    const html = await this.page.evaluate((selectors) => {
+      for (const sel of selectors) {
+        const all = document.querySelectorAll(sel)
+        const outermost: Element[] = []
+        for (let i = 0; i < all.length; i++) {
+          let nested = false
+          for (let j = 0; j < all.length; j++) {
+            if (j !== i && all[j] !== all[i] && all[j].contains(all[i])) {
+              nested = true; break
+            }
+          }
+          if (!nested) outermost.push(all[i])
+        }
+        if (outermost.length > 0) {
+          return (outermost[outermost.length - 1] as HTMLElement).outerHTML ?? ''
+        }
+      }
+      return ''
+    }, SEL.responseContainerSelectors)
+    return htmlToMarkdown(html)
+  }
+
   async streamResponse(onDelta: (chunk: string) => void): Promise<string> {
     const HARD_TIMEOUT = Date.now() + 5 * 60 * 1000
     const STABILITY_MS = 2500

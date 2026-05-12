@@ -152,6 +152,43 @@ export default function DebateView() {
     if (id) window.open(`/api/debates/${id}/export`, '_blank')
   }
 
+  // Re-grab the latest assistant message from a model's live tab for a
+  // given phase. Used when the orchestrator stored an error placeholder
+  // (e.g., rate-limit) but the model's web UI later showed the real reply.
+  const refetch = async (phase: DebatePhase, model: ModelName) => {
+    if (!id) return
+    try {
+      const res = await fetch(`/api/debates/${id}/messages/refetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phase, model }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        alert(`重新获取失败: ${err.error ?? res.statusText}`)
+        return
+      }
+      // Reload the debate page state with the updated content.
+      const detail = await fetch(`/api/debates/${id}`).then(r => r.json())
+      const streams: Record<ModelName, ModelStream[]> = { claude: [], chatgpt: [], deepseek: [] }
+      for (const msg of detail.messages as StoredMessage[]) {
+        streams[msg.model].push({
+          phase: msg.phase as DebatePhase, content: msg.content, complete: true,
+        })
+      }
+      setStaticStreams(streams)
+      if (detail.summary) {
+        setStaticSummary({
+          comparison: detail.summary.comparison,
+          finalProposal: detail.summary.final_proposal,
+          dissent: detail.summary.dissent ?? '',
+        })
+      }
+    } catch (err) {
+      alert(`重新获取出错: ${err}`)
+    }
+  }
+
   // Is THE PHASE BEING VIEWED currently active in the debate?
   const isViewPhaseActive = liveMode && viewPhase === debateCurrentPhase && !done
   const isViewPhaseAborted = aborted && viewPhase === debateCurrentPhase
@@ -304,6 +341,7 @@ export default function DebateView() {
             panels={byPhase[2]}
             isActivePhase={isViewPhaseActive}
             isAborted={isViewPhaseAborted}
+            onRefetch={m => refetch(2, m)}
           />
         )}
         {viewPhase === 3 && (
@@ -319,6 +357,7 @@ export default function DebateView() {
             panels={byPhase[4]}
             isActivePhase={isViewPhaseActive}
             isAborted={isViewPhaseAborted}
+            onRefetch={m => refetch(4, m)}
           />
         )}
         {viewPhase === 5 && (
@@ -336,6 +375,7 @@ export default function DebateView() {
             synthesizer={synthesizer}
             isActivePhase={isViewPhaseActive}
             isAborted={isViewPhaseAborted}
+            onRefetch={m => refetch(6, m)}
           />
         )}
       </main>

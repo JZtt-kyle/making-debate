@@ -53,6 +53,17 @@ export class ChatGPTAdapter implements SiteAdapter {
     await sendBtn.click()
   }
 
+  async readLastAssistantMessage(): Promise<string> {
+    const html = await this.page.evaluate(() => {
+      const msgs = document.querySelectorAll('[data-message-author-role="assistant"]')
+      const last = msgs[msgs.length - 1]
+      if (!last) return ''
+      const md = last.querySelector('.markdown, .prose')
+      return ((md ?? last) as HTMLElement).outerHTML ?? ''
+    })
+    return htmlToMarkdown(html)
+  }
+
   async streamResponse(onDelta: (chunk: string) => void): Promise<string> {
     const HARD_TIMEOUT = Date.now() + 5 * 60 * 1000
 

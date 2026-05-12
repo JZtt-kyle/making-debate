@@ -100,6 +100,25 @@ export const messages = {
       'SELECT phase, model, content, created_at FROM messages WHERE debate_id = ? ORDER BY id'
     ).all(debateId) as MessageRow[]
   },
+
+  /**
+   * Overwrite the content of the LATEST row for (debate, phase, model).
+   * Used by the refetch endpoint when the stored content turned out to be
+   * an error placeholder (e.g., rate-limit notice) but the model has since
+   * produced a real reply that we need to pull in from the live tab.
+   * Returns the row id that was updated, or undefined when nothing matched.
+   */
+  updateLatest(
+    debateId: string, phase: DebatePhase, model: ModelName, content: string,
+  ): number | undefined {
+    const row = db.prepare(
+      'SELECT id FROM messages WHERE debate_id = ? AND phase = ? AND model = ? ORDER BY id DESC LIMIT 1'
+    ).get(debateId, phase, model) as { id: number } | undefined
+    if (!row) return undefined
+    db.prepare('UPDATE messages SET content = ?, created_at = ? WHERE id = ?')
+      .run(content, Date.now(), row.id)
+    return row.id
+  },
 }
 
 export const summaries = {

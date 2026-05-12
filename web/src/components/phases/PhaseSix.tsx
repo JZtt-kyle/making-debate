@@ -24,8 +24,9 @@ export default function PhaseSixView(props: {
   synthesizer: ModelName | undefined
   isActivePhase: boolean
   isAborted: boolean
+  onRefetch?: (model: ModelName) => void
 }) {
-  const { panels, synthesizer, isActivePhase, isAborted } = props
+  const { panels, synthesizer, isActivePhase, isAborted, onRefetch } = props
   const reviewers = MODELS.filter(m => m !== synthesizer)
 
   return (
@@ -62,6 +63,7 @@ export default function PhaseSixView(props: {
             model={m}
             stream={panels[m] ?? null}
             isActivePhase={isActivePhase}
+            onRefetch={onRefetch ? () => onRefetch(m) : undefined}
           />
         ))}
       </div>
@@ -69,10 +71,11 @@ export default function PhaseSixView(props: {
   )
 }
 
-function ReviewerCard({ model, stream, isActivePhase }: {
+function ReviewerCard({ model, stream, isActivePhase, onRefetch }: {
   model: ModelName
   stream: ModelStream | null
   isActivePhase: boolean
+  onRefetch?: () => void
 }) {
   const verdict = verdictBadge(stream?.content)
   const tone = MODEL_META[model].tone
@@ -135,6 +138,27 @@ function ReviewerCard({ model, stream, isActivePhase }: {
             <span className="writing-pulse" style={{ background: tone }} />
             落笔中
           </span>
+        )}
+        {onRefetch && !isActivePhase && (
+          <button
+            onClick={onRefetch}
+            title="重新从模型 tab 抓取本格的最新回复"
+            style={{
+              marginLeft: verdict ? '0.6rem' : 'auto',
+              background: 'transparent',
+              border: '1px solid var(--rule)',
+              borderRadius: 0,
+              padding: '0.18rem 0.55rem',
+              color: 'var(--paper-mute)',
+              fontFamily: 'var(--mono)',
+              fontSize: 9.5,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+            }}
+          >
+            重新获取 ↻
+          </button>
         )}
       </header>
 

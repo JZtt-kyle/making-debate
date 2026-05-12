@@ -6,11 +6,16 @@ export default function PhaseTwoView(props: {
   panels: Partial<Record<ModelName, ModelStream | null>>
   isActivePhase: boolean
   isAborted: boolean
+  onRefetch?: (model: ModelName) => void
 }) {
   return (
     <section className="fade-up">
       <PhaseHeader phase={2} isActive={props.isActivePhase} isAborted={props.isAborted} />
-      <ThreeColumns panels={props.panels} isActivePhase={props.isActivePhase} />
+      <ThreeColumns
+        panels={props.panels}
+        isActivePhase={props.isActivePhase}
+        onRefetch={props.onRefetch}
+      />
     </section>
   )
 }

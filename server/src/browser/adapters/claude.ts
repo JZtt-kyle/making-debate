@@ -99,6 +99,15 @@ export class ClaudeAdapter implements SiteAdapter {
     await sendBtn.click()
   }
 
+  async readLastAssistantMessage(): Promise<string> {
+    const html = await this.page.evaluate((sel) => {
+      const els = document.querySelectorAll(sel)
+      const last = els[els.length - 1] as HTMLElement | undefined
+      return last?.outerHTML ?? ''
+    }, SEL.responseSelector)
+    return htmlToMarkdown(html)
+  }
+
   async streamResponse(onDelta: (chunk: string) => void): Promise<string> {
     const HARD_TIMEOUT = Date.now() + 5 * 60 * 1000
     const STABILITY_MS = 2500

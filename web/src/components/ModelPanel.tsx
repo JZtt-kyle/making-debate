@@ -19,13 +19,17 @@ interface Props {
   abstain?: boolean
   /** Optional label rendered in the column header (e.g., a verdict badge). */
   badge?: { text: string; tone: 'paper' | 'vermilion' | 'mute' }
+  /** When provided, render a small "重新获取 ↻" link in the header. */
+  onRefetch?: () => void
 }
 
 // One model's output inside one phase. Caps height when complete + content
 // exceeds COLLAPSED_MAX_PX, with a fade-out and "展开 ▾" toggle — so three
 // columns of unequal length no longer leave the short ones swimming in
 // whitespace. Auto-scrolls the tail during live writing.
-export default function ModelPanel({ model, stream, isActivePhase, abstain, badge }: Props) {
+export default function ModelPanel({
+  model, stream, isActivePhase, abstain, badge, onRefetch,
+}: Props) {
   const meta = MODEL_META[model]
   const contentRef = useRef<HTMLDivElement>(null)
   const [userExpanded, setUserExpanded] = useState(false)
@@ -124,6 +128,36 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
           }}>
             {badge.text}
           </span>
+        )}
+        {onRefetch && !isActivePhase && !abstain && (
+          <button
+            onClick={onRefetch}
+            title="重新从模型 tab 抓取本格的最新回复"
+            style={{
+              marginLeft: badge ? '0.6rem' : 'auto',
+              background: 'transparent',
+              border: '1px solid var(--rule)',
+              borderRadius: 0,
+              padding: '0.18rem 0.55rem',
+              color: 'var(--paper-mute)',
+              fontFamily: 'var(--mono)',
+              fontSize: 9.5,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              transition: 'color 0.2s, border-color 0.2s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.color = 'var(--paper)'
+              e.currentTarget.style.borderColor = 'var(--paper-mute)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color = 'var(--paper-mute)'
+              e.currentTarget.style.borderColor = 'var(--rule)'
+            }}
+          >
+            重新获取 ↻
+          </button>
         )}
       </header>
 

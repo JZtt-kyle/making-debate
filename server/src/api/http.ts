@@ -1,10 +1,12 @@
 import express, { Router } from 'express'
 import { v4 as uuid } from 'uuid'
 import { runDebate, DEFAULT_MODEL_CONFIGS } from '../orchestrator/debate.js'
-import type { WSEvent, ModelConfigs } from '../orchestrator/debate.js'
+import type { WSEvent, ModelConfigs, DebatePhase } from '../orchestrator/debate.js'
 import { CDPSession } from '../browser/cdp.js'
+import { ADAPTER_REGISTRY, MODELS } from '../browser/adapters/index.js'
 import type { ModelName } from '../browser/adapters/index.js'
 import { debates, messages, summaries } from '../storage/repository.js'
+import { parsePhase5Output } from '../orchestrator/parsers.js'
 
 type WsClients = Map<string, Set<(event: WSEvent) => void>>
 
@@ -115,6 +117,60 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     }
     debates.delete(id)
     res.json({ ok: true })
+  })
+
+  // POST /api/debates/:id/messages/refetch — recover the LATEST assistant
+  // reply from the live model tab and overwrite the stored content. Use
+  // when the orchestrator captured an error placeholder (rate limit, JS
+  // error) but the model later produced a real reply we want to keep.
+  // Body: { phase: 2..6, model: 'claude'|'chatgpt'|'deepseek' }
+  router.post('/debates/:id/messages/refetch', async (req, res) => {
+    const { phase, model } = req.body as { phase?: DebatePhase; model?: ModelName }
+    if (!phase || !model) return res.status(400).json({ error: 'phase and model required' })
+    if (!MODELS.includes(model)) return res.status(400).json({ error: 'unknown model' })
+
+    const debate = debates.get(req.params.id)
+    if (!debate) return res.status(404).json({ error: 'debate not found' })
+
+    try {
+      const page = await cdp.ensurePage(model)
+      const adapter = ADAPTER_REGISTRY[model].ctor()
+      adapter.setPage(page)
+      // Reload first — some sites cache a transient error placeholder that
+      // gets replaced by the real reply once the page refreshes (most often
+      // ChatGPT's "Unusual activity" notice). Then wait until at least one
+      // assistant message renders, up to 15s.
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+      await adapter.ensureReady()
+      const deadline = Date.now() + 15_000
+      while (Date.now() < deadline) {
+        const n = await page.evaluate(() =>
+          document.querySelectorAll(
+            '[data-message-author-role="assistant"], .font-claude-response, .ds-markdown'
+          ).length
+        ).catch(() => 0)
+        if (n > 0) break
+        await new Promise(r => setTimeout(r, 500))
+      }
+      const content = await adapter.readLastAssistantMessage()
+      if (!content.trim()) {
+        return res.status(409).json({ error: 'live tab has no assistant message to capture' })
+      }
+
+      const updated = messages.updateLatest(req.params.id, phase, model, content)
+      if (!updated) return res.status(404).json({ error: 'no prior message row to update' })
+
+      // If we just refetched the synthesizer's Phase 5, re-parse the summary.
+      if (phase === 5 && model === debate.synthesizer) {
+        const { comparison, finalProposal, dissent } = parsePhase5Output(content)
+        summaries.upsert(req.params.id, comparison, finalProposal, dissent)
+      }
+
+      res.json({ ok: true, content, length: content.length })
+    } catch (err) {
+      console.error('[refetch] failed:', err)
+      res.status(500).json({ error: String(err) })
+    }
   })
 
   // GET /api/status — browser readiness

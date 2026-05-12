@@ -19,6 +19,13 @@ export interface SiteAdapter {
   newConversation(): Promise<void>
   sendMessage(text: string): Promise<void>
   streamResponse(onDelta: (chunk: string) => void): Promise<string>
+  /**
+   * Read the most-recent assistant message currently rendered on the page,
+   * without sending anything. Used by the refetch endpoint to recover from
+   * cases where streamResponse captured an error placeholder (e.g., a rate-
+   * limit notice) but the model later filled in a real reply that we missed.
+   */
+  readLastAssistantMessage(): Promise<string>
   configure?(config: ModelConfig): Promise<void>
 }
 
