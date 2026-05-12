@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ModelName, ModelStream } from '../hooks/useDebateSocket.ts'
@@ -8,6 +8,11 @@ const MODEL_TONE: Record<ModelName, { rule: string; display: string; latin: stri
   chatgpt:  { rule: 'var(--sage)',  display: 'ChatGPT',  latin: 'OpenAI'    },
   deepseek: { rule: 'var(--azure)', display: 'DeepSeek', latin: 'Hangzhou'  },
 }
+
+// Collapsed cap for completed columns. Picked so a typical 4-section Phase 2
+// proposal (≈1800 chars) shows ~half — enough to read structure, comparable
+// across all three columns. Live-writing columns ignore the cap.
+const COLLAPSED_MAX_PX = 560
 
 interface Props {
   model: ModelName
@@ -19,16 +24,37 @@ interface Props {
   badge?: { text: string; tone: 'paper' | 'vermilion' | 'mute' }
 }
 
-// One model's output inside ONE phase. Used as a column within PhaseSection.
-// Auto-scrolls to keep the streaming tail visible.
+// One model's output inside one phase. Caps height when complete + content
+// exceeds COLLAPSED_MAX_PX, with a fade-out and "展开 ▾" toggle — so three
+// columns of unequal length no longer leave the short ones swimming in
+// whitespace. Auto-scrolls the tail during live writing.
 export default function ModelPanel({ model, stream, isActivePhase, abstain, badge }: Props) {
   const tone = MODEL_TONE[model]
   const bottomRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [userExpanded, setUserExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
   const isWriting = !!stream && !stream.complete && isActivePhase && !abstain
+  // While streaming we always show full content (the writer's tail needs to
+  // be visible). When complete, respect user choice; default = collapsed.
+  const effectiveCollapsed = !isWriting && !userExpanded
+
+  // Re-measure whenever content grows. scrollHeight is the natural height
+  // ignoring any max-height/overflow rule on the parent.
+  useLayoutEffect(() => {
+    if (!contentRef.current || abstain) {
+      setOverflows(false)
+      return
+    }
+    setOverflows(contentRef.current.scrollHeight > COLLAPSED_MAX_PX + 32)
+  }, [stream?.content, abstain])
 
   useEffect(() => {
     if (isWriting) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [stream?.content, isWriting])
+
+  const showToggle = overflows && !isWriting && !abstain
 
   return (
     <div style={{
@@ -100,35 +126,84 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
         )}
       </header>
 
-      <div className="prose" style={{ minWidth: 0 }}>
-        {abstain ? (
-          <p style={{
-            fontFamily: 'var(--serif-body)',
-            fontStyle: 'italic',
-            fontSize: 14,
-            color: 'var(--paper-faint)',
-          }}>
-            综合者本环节不参与复核。
-          </p>
-        ) : !stream || stream.content.length === 0 ? (
-          <p style={{
-            fontFamily: 'var(--serif-body)',
-            fontStyle: 'italic',
-            fontSize: 14,
-            color: 'var(--paper-faint)',
-          }}>
-            {isActivePhase ? '执笔待书…' : '尚未发言。'}
-          </p>
-        ) : (
-          <>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {stream.content}
-            </ReactMarkdown>
-            {isWriting && <span className="caret" style={{ background: tone.rule }} />}
-          </>
+      <div style={{ position: 'relative', minWidth: 0 }}>
+        <div
+          ref={contentRef}
+          className="prose"
+          style={{
+            minWidth: 0,
+            maxHeight: effectiveCollapsed && overflows ? COLLAPSED_MAX_PX : 'none',
+            overflow: effectiveCollapsed && overflows ? 'hidden' : 'visible',
+            transition: 'max-height 0.4s cubic-bezier(0.2,0.7,0.2,1)',
+          }}
+        >
+          {abstain ? (
+            <p style={{
+              fontFamily: 'var(--serif-body)',
+              fontStyle: 'italic',
+              fontSize: 14,
+              color: 'var(--paper-faint)',
+            }}>
+              综合者本环节不参与复核。
+            </p>
+          ) : !stream || stream.content.length === 0 ? (
+            <p style={{
+              fontFamily: 'var(--serif-body)',
+              fontStyle: 'italic',
+              fontSize: 14,
+              color: 'var(--paper-faint)',
+            }}>
+              {isActivePhase ? '执笔待书…' : '尚未发言。'}
+            </p>
+          ) : (
+            <>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {stream.content}
+              </ReactMarkdown>
+              {isWriting && <span className="caret" style={{ background: tone.rule }} />}
+            </>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Fade-out gradient when collapsed and overflowing */}
+        {effectiveCollapsed && overflows && (
+          <div style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 110,
+            pointerEvents: 'none',
+            background: 'linear-gradient(to bottom, rgba(20,18,16,0) 0%, var(--ink) 90%)',
+          }} />
         )}
-        <div ref={bottomRef} />
       </div>
+
+      {showToggle && (
+        <button
+          onClick={() => setUserExpanded(v => !v)}
+          style={{
+            alignSelf: 'flex-start',
+            background: 'transparent',
+            border: 'none',
+            borderRadius: 0,
+            padding: '0.5rem 0',
+            marginTop: '0.5rem',
+            color: 'var(--paper-mute)',
+            fontFamily: 'var(--mono)',
+            fontSize: 10.5,
+            letterSpacing: '0.2em',
+            textTransform: 'uppercase',
+            cursor: 'pointer',
+            transition: 'color 0.2s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--paper)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--paper-mute)')}
+        >
+          {userExpanded ? '收起 ▴' : '展开全文 ▾'}
+        </button>
+      )}
     </div>
   )
 }
