@@ -22,8 +22,14 @@ export function anonymizeProposals(
   }))
 }
 
-export const PHASE1_PROMPT = (topic: string, principles: string, modelName: ModelName): string => `
-你正在参与一场三方结构化辩论（另外两位参与者是不同的 AI 模型）。本场辩论的目的不是争输赢，而是通过不同视角的碰撞迭代出更好的方案。
+// ---------------------------------------------------------------------------
+// Phase 2 — 各自方案 (initial proposal)
+// Structured headers force the model to commit to (a) problem framing, (b)
+// decision points, (c) the plan itself, (d) anticipated failure modes — so
+// later phases can grip on something concrete instead of free-form prose.
+// ---------------------------------------------------------------------------
+export const PHASE2_PROMPT = (topic: string, principles: string, modelName: ModelName): string => `
+你正在参与一场五幕结构化辩论（另外两位参与者是不同的 AI 模型）。本场辩论的目的不是争输赢，而是通过观点的碰撞、批评、修订、综合，迭代出比单方更完整的方案。
 
 【议题】
 ${topic}
@@ -33,17 +39,31 @@ ${principles ? `【设计原则 / 约束条件】\n${principles}\n` : ''}
 你是 ${modelName}，请以自己独立的视角进行分析。
 
 【本阶段任务：提出你的初步方案】
-请直接给出你对此议题的初步方案。要求：
-1. 先简述你对问题的核心理解（2-3句）
-2. 给出你的具体方案（结构清晰，可分点）
-3. 说明你方案的关键优势，以及你预见的主要风险
+请严格按以下四个小节输出（每节都要有，标题原样保留）：
 
-请用中文回答。不要先说废话，直接进入方案。
+## 问题界定
+两到三句话，说明你认为本议题真正要解决的核心问题是什么——你看到的本质，可能不同于字面表述。
+
+## 关键决策点
+列出 3 条以内你识别出的关键取舍 / 分叉（"是 A 还是 B"形式），并简要说明你的选择倾向。这是后续争论的锚点。
+
+## 具体方案
+结构清晰、可分点的方案主体。
+
+## 预期失败模式
+2-3 条你方案最可能在哪里出问题——主动暴露弱点比掩饰它更有价值。
+
+请用中文回答。不要废话开场，直接进入「## 问题界定」。
 `.trim()
 
-export const PHASE3_PROMPT = (
-  anonymized: AnonProposal[]
-): string => {
+
+// ---------------------------------------------------------------------------
+// Phase 3 — 匿名互评 + 排名
+// Run in a FRESH conversation per model so the evaluator does not have its
+// own Phase 2 proposal in context — this is what makes the anonymity real.
+// Tight 3-bullet critique structure (≤80 chars each) forces specificity.
+// ---------------------------------------------------------------------------
+export const PHASE3_PROMPT = (anonymized: AnonProposal[]): string => {
   const proposalsText = anonymized
     .map(p => `=== 方案${p.label} ===\n${p.content}`)
     .join('\n\n')
@@ -51,19 +71,26 @@ export const PHASE3_PROMPT = (
   const labelList = anonymized.map(p => `方案${p.label}`).join(' / ')
 
   return `
-【互相批评与排名阶段】
+【匿名互评与排名阶段】
 
-以下是本议题上的三份方案。**这三份方案的作者身份已被匿名**，其中包括你自己之前提出的方案，但你不需要识别哪份是你自己的——请把它们当作三份独立的提案一视同仁地评估。
+以下是同一议题上的三份方案。三份方案的作者已被匿名，请把它们当作三份独立的提案一视同仁地评估。
 
 ${proposalsText}
 
 【你的任务】
 
-第一部分：对三份方案分别进行深度批评（每份分开处理），要求按以下结构：
+第一部分：对每份方案分别批评。**严格使用以下三段式结构**，每段不超过 80 字：
 
-1. **假设/前提挑战**：指出该方案中值得质疑的假设或前提
-2. **风险与盲点**：指出该方案中的具体风险、遗漏或盲点
-3. **可改进方向**：给出具体的改进建议
+### 对方案甲
+- **决定性缺陷**：该方案最可能让它崩溃的那一点（不是边角问题）
+- **可救的洞见**：即使整体不采纳，也值得保留进综合方案的部分
+- **具体改动**：一句话说明如何修复或加强
+
+### 对方案乙
+（同结构）
+
+### 对方案丙
+（同结构）
 
 第二部分：在评估完所有方案后，给出一个最终排名。**必须严格按以下格式输出在回答末尾**：
 
@@ -88,7 +115,6 @@ export function parseRanking(text: string): AnonLabel[] | null {
   const matches = Array.from(tail.matchAll(/\d+\.\s*方案\s*([甲乙丙])/g))
   if (matches.length === 0) return null
   const labels = matches.map(m => m[1] as AnonLabel)
-  // Deduplicate while preserving order
   const seen = new Set<AnonLabel>()
   return labels.filter(l => {
     if (seen.has(l)) return false
@@ -97,8 +123,6 @@ export function parseRanking(text: string): AnonLabel[] | null {
   })
 }
 
-// Aggregate rankings from all evaluators into average rank per proposal.
-// Lower average = better. Missing rankings are skipped.
 export interface AggregatedRanking {
   label: AnonLabel
   originalName: ModelName
@@ -132,77 +156,252 @@ export function aggregateRankings(
     .sort((a, b) => a.avgRank - b.avgRank)
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — 作者修订 (NEW: this is where "iteration" actually happens)
+// Each author sees: their own original proposal, the full set of critiques
+// (which includes the critiques targeted at them, identifiable via the
+// anonymous label they were assigned), and the aggregated ranking. They must
+// produce a revised proposal that explicitly addresses each critique.
+// ---------------------------------------------------------------------------
 export const PHASE4_PROMPT = (
-  synthesizerName: ModelName,
-  phase2Responses: { name: ModelName; content: string }[],
-  phase3Responses: { name: ModelName; content: string }[],
-  aggregated?: AggregatedRanking[]
+  modelName: ModelName,
+  myLabel: AnonLabel,
+  myOriginalProposal: string,
+  allCritiques: { reviewer: ModelName; content: string }[],
+  aggregated: AggregatedRanking[],
 ): string => {
-  const proposals = phase2Responses
-    .map(r => `=== ${r.name} 的初步方案 ===\n${r.content}`)
+  const myRank = aggregated.find(a => a.label === myLabel)
+  const rankLine = myRank && myRank.voteCount > 0
+    ? `你的方案（在盲审中被标为「方案${myLabel}」）平均排名 ${myRank.avgRank.toFixed(2)}（共 ${myRank.voteCount} 票），在三份方案中位列第 ${aggregated.findIndex(a => a.label === myLabel) + 1}。`
+    : `（本轮排名信号缺失）`
+
+  const critiquesText = allCritiques
+    .map(c => `--- 来自评审者 ${c.reviewer} 的盲审意见 ---\n${c.content}`)
     .join('\n\n')
 
-  const critiques = phase3Responses
-    .map(r => `=== ${r.name} 的批评 ===\n${r.content}`)
+  return `
+【作者修订阶段】
+
+你是 ${modelName}。**重要背景**：在上一轮匿名互评中，你的方案被标为「方案${myLabel}」——但评审者并不知道这是你写的。下面是匿名同行对全部三份方案的批评，请重点关注其中针对「方案${myLabel}」（也就是你）的部分。
+
+【你的原方案】
+${myOriginalProposal}
+
+【三位评审者的盲审意见（全部，请关注针对方案${myLabel}的部分）】
+${critiquesText}
+
+【匿名排名结果】
+${rankLine}
+
+【你的任务】
+请严格按以下三个小节输出：
+
+## 一、对针对我的批评的逐条回应
+把所有"针对方案${myLabel}"的"决定性缺陷"和"具体改动"提炼出来，逐条给出你的回应。每条 ≤ 50 字，明确分类为下列之一：
+- **接受** — 我同意，将在修订中改正
+- **反驳** — 这条批评建立在错误前提上，理由是…
+- **反提案** — 批评指出了真实问题但建议的方向不对，我提议改为…
+
+格式示例：
+> 「方案应增加 X」（接受 / 反驳 / 反提案）：……
+
+## 二、修订后的方案
+基于上面的回应，给出修订稿。保留你原方案中未被有效挑战的部分；改写被批评命中的部分；可以引入其他两份方案里你认为正确的洞见。结构清晰、可分点。
+
+## 三、坚守的取舍
+列出 1-3 条「即使被批评仍坚持」的决策，并给出你坚持的理由。这是综合者需要看到的"非妥协点"。
+
+用中文回答。不要废话，直接从「## 一、对针对我的批评的逐条回应」开始。
+`.trim()
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 5 — 综合 + 裁决 + 少数派意见 (synthesizer only, on REVISED proposals)
+// The synthesizer sees the three REVISED proposals (post-critique), the
+// surviving disagreements, the ranking, and produces four sections:
+//  一、异同对照表
+//  二、关键分歧裁决
+//  三、迭代后的综合方案 + 对原始约束的自检
+//  四、少数派意见
+// ---------------------------------------------------------------------------
+export const PHASE5_PROMPT = (
+  synthesizerName: ModelName,
+  topic: string,
+  principles: string,
+  revisedProposals: { name: ModelName; content: string }[],
+  allCritiques: { reviewer: ModelName; content: string }[],
+  aggregated: AggregatedRanking[],
+): string => {
+  const revisions = revisedProposals
+    .map(r => `=== ${r.name} 的修订稿 ===\n${r.content}`)
     .join('\n\n')
 
-  const rankingSection = aggregated && aggregated.some(a => a.voteCount > 0)
+  const critiques = allCritiques
+    .map(c => `=== 评审者 ${c.reviewer} 的盲审意见 ===\n${c.content}`)
+    .join('\n\n')
+
+  const rankingSection = aggregated.some(a => a.voteCount > 0)
     ? `
 
---- 同行匿名评分汇总（Phase 3 中三方对全部方案的盲审排名聚合，平均排名越小越好）---
+【上一轮匿名排名汇总（平均排名越小越好）】
 ${aggregated.map((a, i) =>
   `${i + 1}. ${a.originalName}（匿名标签：方案${a.label}） — 平均排名 ${a.avgRank.toFixed(2)}（来自 ${a.voteCount} 票）`
 ).join('\n')}
 
-注：评分是匿名进行的，评估者不知道作者身份。这是一个客观信号，但不是定论——你应当在综合时参考它，但仍以你独立判断为准。`
+注：此排名基于初步方案的盲审，修订稿可能已经显著改善；请把它作为参考信号，不要作为定论。`
+    : ''
+
+  const principlesBlock = principles
+    ? `\n【原始设计原则 / 约束】\n${principles}\n`
     : ''
 
   return `
 【综合迭代阶段】
 
-以下是三个模型的初步方案和相互批评，请你作为综合者 (${synthesizerName}) 完成最终输出。
+你是综合者 ${synthesizerName}。三方已经各自经历了「提案 → 被匿名批评 → 修订」三步，下面是他们的修订稿、原始的盲审意见、和排名汇总。请把它们综合成一份比任何单一方案都更完整的终稿。
 
---- 三方初步方案 ---
-${proposals}
+【议题】
+${topic}
+${principlesBlock}
+【三方修订稿】
+${revisions}
 
---- 三方批评 ---
+【三方原始盲审意见（供你识别仍未被妥善回应的批评）】
 ${critiques}${rankingSection}
 
 【你的任务】
-请完成以下两部分输出：
+请严格按以下四个小节输出（标题原样保留）：
 
 ## 一、观点异同对照
 
-用 Markdown 管道表格（| 列1 | 列2 | 列3 |）梳理三方在以下维度上的异同：
+用 Markdown 管道表格梳理三份**修订稿**在以下维度上的异同：
 - 核心设计理念
-- 技术/实现路径
+- 技术 / 实现路径
 - 优先解决的问题
 - 主要分歧点
 
-表格必须使用标准 Markdown 格式，例如：
+表格必须使用标准 Markdown 格式：
 | 维度 | Claude | ChatGPT | DeepSeek |
 |------|--------|---------|----------|
 | ... | ... | ... | ... |
 
-## 二、迭代后的综合方案
+## 二、关键分歧裁决
 
-基于上述所有观点，给出一个迭代后的综合方案。要求：
-- 吸纳三方的合理之处
-- 正面回应各方提出的关键风险
-- 明确指出你在关键分歧点上的取舍及理由
-- 方案应该比任何单一方案都更完善
+列出修订之后仍然存在的核心分歧（2-4 条）。对每条：
+- **分歧描述**：是什么分歧、各方立场是什么
+- **分类**：事实性 / 价值观 / 策略 / 范围 中的一种
+- **你的裁决**：你站在哪一方，或给出第三方案
+- **理由**：为什么这样裁决
 
-用中文输出，结构清晰。
+## 三、迭代后的综合方案
+
+基于上述所有信息，给出综合方案。要求：
+- 吸纳三方修订稿中的合理之处
+- 显式回应初步盲审中提出但未被任一作者妥善修复的关键风险（如果有）
+- 在结尾用一个清单形式自检：${principles ? '对每一条「原始设计原则」给出是否满足 + 一句话说明' : '对议题中提到的每一个核心要求，给出是否满足 + 一句话说明'}
+
+## 四、少数派意见
+
+列出 1-3 条「在综合方案中没有采纳，但仍值得保留」的反对意见。每条用一段简短说明：观点本身、提出者（如果有迹可循）、为什么值得保留、在什么情况下应当重新考虑。
+
+用中文输出。结构清晰，不要废话开场。
 `.trim()
 }
 
-// Parse the Phase 4 synthesizer output into the two sections defined by PHASE4_PROMPT.
+// Parse the Phase 5 synthesizer output into four sections.
 // Lives next to the prompt so format changes only touch one file.
-export function parsePhase4Output(text: string): { comparison: string; finalProposal: string } {
-  const comparisonMatch = text.match(/(?:##\s*)?一[、,，]观点异同对照([\s\S]*?)(?:##\s*)?二[、,，]/i)
-  const proposalMatch = text.match(/(?:##\s*)?二[、,，]迭代后的综合方案([\s\S]*?)$/i)
+export function parsePhase5Output(text: string): {
+  comparison: string
+  finalProposal: string
+  dissent: string
+} {
+  // Each match captures content up to the next section header.
+  const sec = (head: string, nextHead: string) => {
+    const re = new RegExp(`(?:##\\s*)?${head}([\\s\\S]*?)(?:##\\s*)?${nextHead}`, 'i')
+    return text.match(re)?.[1]?.trim() ?? ''
+  }
+  const last = (head: string) => {
+    const re = new RegExp(`(?:##\\s*)?${head}([\\s\\S]*?)$`, 'i')
+    return text.match(re)?.[1]?.trim() ?? ''
+  }
+
+  const comparison = sec('一[、,，]\\s*观点异同对照', '二[、,，]')
+  // 关键分歧裁决 — merged INTO comparison so the legacy two-tab UI still works.
+  const arbitration = sec('二[、,，]\\s*关键分歧裁决', '三[、,，]')
+  const finalProposal = sec('三[、,，]\\s*迭代后的综合方案', '四[、,，]')
+  const dissent = last('四[、,，]\\s*少数派意见')
+
+  const comparisonCombined = arbitration
+    ? `${comparison}\n\n## 关键分歧裁决\n\n${arbitration}`
+    : comparison
+
   return {
-    comparison: comparisonMatch?.[1]?.trim() ?? text,
-    finalProposal: proposalMatch?.[1]?.trim() ?? '',
+    comparison: comparisonCombined || text,
+    finalProposal,
+    dissent,
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 6 — 终稿复核 (ratify / veto, parallel by non-synthesizers)
+// A lightweight check: each non-synthesizer reads the final proposal + dissent
+// and either RATIFIES or VETOES with a specific clause. Keeps the synthesizer
+// honest. Cheap: ≤200 words.
+// ---------------------------------------------------------------------------
+export const PHASE6_PROMPT = (
+  modelName: ModelName,
+  synthesizerName: ModelName,
+  comparison: string,
+  finalProposal: string,
+  dissent: string,
+): string => {
+  const dissentBlock = dissent
+    ? `\n【综合者保留的少数派意见】\n${dissent}\n`
+    : ''
+
+  return `
+【终稿复核阶段】
+
+你是 ${modelName}。综合者 ${synthesizerName} 刚刚整合出了终稿，请你以独立审稿人的身份给出快速判断。注意：本环节不是再一次完整批评，而是 ≤200 字的复核——只在你**确实发现了不该被忽略的问题**时才 VETO。
+
+【综合者输出的观点异同对照 + 分歧裁决】
+${comparison}
+
+【综合者输出的迭代后综合方案】
+${finalProposal}
+${dissentBlock}
+【你的任务】
+用 ≤200 字给出审稿意见，包含：
+- 你是否支持本终稿
+- 如果 VETO，**必须**给出具体条款（例如「方案中第 X 条没有回应批评里指出的 Y 风险」）；不接受"我觉得不好"这种模糊措辞
+
+**最后一行必须严格是以下两种之一**：
+
+VERDICT: RATIFY
+
+或
+
+VERDICT: VETO — <一句话说明被否决的具体条款>
+
+用中文回答。
+`.trim()
+}
+
+export type Verdict = 'RATIFY' | 'VETO' | 'UNKNOWN'
+
+export interface VerdictResult {
+  verdict: Verdict
+  reason: string
+}
+
+export function parseVerdict(text: string): VerdictResult {
+  const cleaned = text.replace(/\\\./g, '.')
+  const m = cleaned.match(/VERDICT:\s*(RATIFY|VETO)\s*(?:[—\-:]\s*(.+))?/i)
+  if (!m) return { verdict: 'UNKNOWN', reason: '' }
+  return {
+    verdict: m[1].toUpperCase() as Verdict,
+    reason: (m[2] ?? '').trim(),
   }
 }

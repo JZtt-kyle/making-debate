@@ -74,9 +74,11 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
 
     const phaseNames: Record<number, string> = {
       1: '开题',
-      2: '初步方案',
-      3: '互相批评',
-      4: '综合迭代',
+      2: '各自方案',
+      3: '匿名互评 + 排名',
+      4: '作者修订',
+      5: '综合迭代',
+      6: '终稿复核',
     }
 
     let md = `# ${debate.topic}\n\n`
@@ -93,8 +95,9 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     }
 
     if (summary) {
-      md += `## 异同点对照\n\n${summary.comparison}\n\n`
+      md += `## 异同点对照 + 关键分歧裁决\n\n${summary.comparison}\n\n`
       md += `## 最终综合方案\n\n${summary.final_proposal}\n\n`
+      if (summary.dissent) md += `## 少数派意见\n\n${summary.dissent}\n\n`
     }
 
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8')

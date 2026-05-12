@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS summaries (
   debate_id TEXT PRIMARY KEY,
   comparison TEXT NOT NULL,
   final_proposal TEXT NOT NULL,
+  dissent TEXT NOT NULL DEFAULT '',
   FOREIGN KEY (debate_id) REFERENCES debates(id)
 );
 

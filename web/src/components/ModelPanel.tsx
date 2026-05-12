@@ -13,14 +13,18 @@ interface Props {
   model: ModelName
   stream: ModelStream | null
   isActivePhase: boolean
+  /** When true, render this column as "本环节不参与" (e.g., synthesizer in Phase 6 review). */
+  abstain?: boolean
+  /** Optional label rendered in the column header (e.g., a verdict badge). */
+  badge?: { text: string; tone: 'paper' | 'vermilion' | 'mute' }
 }
 
 // One model's output inside ONE phase. Used as a column within PhaseSection.
 // Auto-scrolls to keep the streaming tail visible.
-export default function ModelPanel({ model, stream, isActivePhase }: Props) {
+export default function ModelPanel({ model, stream, isActivePhase, abstain, badge }: Props) {
   const tone = MODEL_TONE[model]
   const bottomRef = useRef<HTMLDivElement>(null)
-  const isWriting = !!stream && !stream.complete && isActivePhase
+  const isWriting = !!stream && !stream.complete && isActivePhase && !abstain
 
   useEffect(() => {
     if (isWriting) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -80,10 +84,33 @@ export default function ModelPanel({ model, stream, isActivePhase }: Props) {
             落笔中
           </span>
         )}
+        {badge && !isWriting && (
+          <span style={{
+            marginLeft: 'auto',
+            fontFamily: 'var(--mono)',
+            fontSize: 10,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: badge.tone === 'vermilion' ? 'var(--vermilion)'
+                  : badge.tone === 'mute'      ? 'var(--paper-mute)'
+                                               : 'var(--paper)',
+          }}>
+            {badge.text}
+          </span>
+        )}
       </header>
 
       <div className="prose" style={{ minWidth: 0 }}>
-        {!stream || stream.content.length === 0 ? (
+        {abstain ? (
+          <p style={{
+            fontFamily: 'var(--serif-body)',
+            fontStyle: 'italic',
+            fontSize: 14,
+            color: 'var(--paper-faint)',
+          }}>
+            综合者本环节不参与复核。
+          </p>
+        ) : !stream || stream.content.length === 0 ? (
           <p style={{
             fontFamily: 'var(--serif-body)',
             fontStyle: 'italic',

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 export type ModelName = 'claude' | 'chatgpt' | 'deepseek'
-export type DebatePhase = 1 | 2 | 3 | 4
+// 5-phase iteration: 1=conceptual; 2-6 are the five working phases.
+export type DebatePhase = 1 | 2 | 3 | 4 | 5 | 6
 
 export interface WSEvent {
   type: 'phase_started' | 'delta' | 'message_complete' | 'summary' | 'done' | 'error'
@@ -21,7 +22,7 @@ export interface ModelStream {
 export interface DebateState {
   phase: DebatePhase
   streams: Record<ModelName, ModelStream[]>
-  summary: { comparison: string; finalProposal: string } | null
+  summary: { comparison: string; finalProposal: string; dissent?: string } | null
   done: boolean
   error: string | null
 }

@@ -2,7 +2,10 @@ import { db } from './db.js'
 import type { ModelName } from '../browser/adapters/index.js'
 
 export type DebateStatus = 'pending' | 'running' | 'done' | 'error'
-export type DebatePhase = 1 | 2 | 3 | 4
+// 5-phase iteration: 1=conceptual (no output); 2=各自方案; 3=匿名互评+排名;
+// 4=作者修订; 5=综合; 6=终稿复核 (ratify/veto). The numbering keeps phase 1
+// reserved for the conceptual "开题" so existing DB rows stay valid.
+export type DebatePhase = 1 | 2 | 3 | 4 | 5 | 6
 
 export interface DebateRow {
   id: string
@@ -36,6 +39,7 @@ export interface SummaryRow {
   debate_id: string
   comparison: string
   final_proposal: string
+  dissent: string
 }
 
 export const debates = {
@@ -99,10 +103,10 @@ export const messages = {
 }
 
 export const summaries = {
-  upsert(debateId: string, comparison: string, finalProposal: string): void {
+  upsert(debateId: string, comparison: string, finalProposal: string, dissent: string = ''): void {
     db.prepare(
-      'INSERT OR REPLACE INTO summaries (debate_id, comparison, final_proposal) VALUES (?, ?, ?)'
-    ).run(debateId, comparison, finalProposal)
+      'INSERT OR REPLACE INTO summaries (debate_id, comparison, final_proposal, dissent) VALUES (?, ?, ?, ?)'
+    ).run(debateId, comparison, finalProposal, dissent)
   },
 
   get(debateId: string): SummaryRow | undefined {

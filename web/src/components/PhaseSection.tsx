@@ -5,11 +5,14 @@ import ModelPanel from './ModelPanel.tsx'
 const MODELS: ModelName[] = ['claude', 'chatgpt', 'deepseek']
 
 // DB phase id → display roman / label (phase 1 is "开题" — never has model output)
+// 5-phase iteration: II 各自方案 → III 匿名互评 → IV 作者修订 → V 综合 → VI 终稿复核
 export const PHASE_DISPLAY: Record<DebatePhase, { roman: string; label: string; subtitle: string }> = {
   1: { roman: '序', label: '开题',     subtitle: '议题与设计原则' },
   2: { roman: 'I',  label: '各自方案', subtitle: '三方独立提出' },
-  3: { roman: 'II', label: '互相批评', subtitle: '匿名盲审 · 风险与改进' },
-  4: { roman: 'III',label: '综合迭代', subtitle: '综合者整合产出' },
+  3: { roman: 'II', label: '匿名互评', subtitle: '盲审 · 风险与排名' },
+  4: { roman: 'III',label: '作者修订', subtitle: '回应批评 · 二次提案' },
+  5: { roman: 'IV', label: '综合裁决', subtitle: '异同 · 分歧 · 终稿 · 少数派' },
+  6: { roman: 'V',  label: '终稿复核', subtitle: '非综合者 · 批准或否决' },
 }
 
 interface Props {
@@ -17,14 +20,28 @@ interface Props {
   panels: Partial<Record<ModelName, ModelStream | null>>
   isActivePhase: boolean
   isAborted?: boolean
-  /** Phase IV: render a single wide column (synthesizer only) + optional extra slot. */
+  /** Phase V: render a single wide column (synthesizer only) + optional extra slot. */
   singleColumn?: ModelName
+  /** Phase VI: this model is sitting out (synthesizer skips its own review). */
+  abstainModel?: ModelName
   /** Optional content rendered below the columns (e.g., comparison table / final proposal). */
   children?: ReactNode
 }
 
+// Parse "VERDICT: RATIFY" / "VERDICT: VETO — ..." from a Phase 6 stream.
+function readVerdict(content: string | undefined): { text: string; tone: 'paper' | 'vermilion' | 'mute' } | null {
+  if (!content) return null
+  const cleaned = content.replace(/\\\./g, '.')
+  const m = cleaned.match(/VERDICT:\s*(RATIFY|VETO)/i)
+  if (!m) return null
+  const verdict = m[1].toUpperCase()
+  return verdict === 'RATIFY'
+    ? { text: '批准 · RATIFY', tone: 'paper' }
+    : { text: '否决 · VETO',   tone: 'vermilion' }
+}
+
 export default function PhaseSection({
-  phase, panels, isActivePhase, isAborted = false, singleColumn, children,
+  phase, panels, isActivePhase, isAborted = false, singleColumn, abstainModel, children,
 }: Props) {
   const display = PHASE_DISPLAY[phase]
   const status = isAborted ? '未付印' : isActivePhase ? '落笔中' : '已成稿'
@@ -107,14 +124,23 @@ export default function PhaseSection({
           gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
           gap: '0',
         }}>
-          {MODELS.map(m => (
-            <ModelPanel
-              key={m}
-              model={m}
-              stream={panels[m] ?? null}
-              isActivePhase={isActivePhase}
-            />
-          ))}
+          {MODELS.map(m => {
+            const isAbstain = abstainModel === m
+            // Phase VI: parse verdict and surface it as a header badge.
+            const verdictBadge = phase === 6 && !isAbstain
+              ? readVerdict(panels[m]?.content) ?? undefined
+              : undefined
+            return (
+              <ModelPanel
+                key={m}
+                model={m}
+                stream={panels[m] ?? null}
+                isActivePhase={isActivePhase && !isAbstain}
+                abstain={isAbstain}
+                badge={verdictBadge}
+              />
+            )
+          })}
         </div>
       )}
 

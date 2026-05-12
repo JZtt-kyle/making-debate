@@ -25,6 +25,10 @@ for (const col of ['deepseek_config', 'claude_config']) {
     _db.exec(`ALTER TABLE debates ADD COLUMN ${col} TEXT NOT NULL DEFAULT '{}'`)
   } catch { /* column already exists */ }
 }
+// 5-phase iteration: summaries gains a "dissent" (少数派意见) column.
+try {
+  _db.exec(`ALTER TABLE summaries ADD COLUMN dissent TEXT NOT NULL DEFAULT ''`)
+} catch { /* column already exists */ }
 
 // Orphan cleanup: any debate stuck at 'pending'/'running' belongs to a previous
 // server process (it can't be in-flight on a freshly-started server). Mark them

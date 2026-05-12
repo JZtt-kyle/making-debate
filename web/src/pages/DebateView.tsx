@@ -7,7 +7,10 @@ import PhaseSection, { PHASE_DISPLAY } from '../components/PhaseSection.tsx'
 import { useDebateSocket, ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
 
 const MODELS: ModelName[] = ['claude', 'chatgpt', 'deepseek']
-const CONTENT_PHASES: DebatePhase[] = [2, 3, 4]
+// DB phases that hold model output: II-VI (2-6).
+const CONTENT_PHASES: DebatePhase[] = [2, 3, 4, 5, 6]
+const PHASE_SYNTH = 5  // 综合者独立成稿的阶段
+const PHASE_REVIEW = 6 // 终稿复核（综合者不参与）
 
 interface StoredMessage {
   phase: number
@@ -18,6 +21,7 @@ interface StoredMessage {
 interface StoredSummary {
   comparison: string
   final_proposal: string
+  dissent?: string
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -32,7 +36,7 @@ type ByPhase = Record<DebatePhase, Partial<Record<ModelName, ModelStream | null>
 function transposeByPhase(
   streams: Record<ModelName, ModelStream[]>
 ): ByPhase {
-  const out: ByPhase = { 1: {}, 2: {}, 3: {}, 4: {} }
+  const out: ByPhase = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} }
   for (const model of MODELS) {
     for (const s of streams[model] ?? []) {
       out[s.phase][model] = s
@@ -48,7 +52,7 @@ export default function DebateView() {
   const [staticStreams, setStaticStreams] = useState<Record<ModelName, ModelStream[]>>({
     claude: [], chatgpt: [], deepseek: [],
   })
-  const [staticSummary, setStaticSummary] = useState<{ comparison: string; finalProposal: string } | null>(null)
+  const [staticSummary, setStaticSummary] = useState<{ comparison: string; finalProposal: string; dissent?: string } | null>(null)
 
   const liveState = useDebateSocket(id, liveMode)
 
@@ -68,7 +72,11 @@ export default function DebateView() {
         }
         setStaticStreams(streams)
         if (data.summary) {
-          setStaticSummary({ comparison: data.summary.comparison, finalProposal: data.summary.final_proposal })
+          setStaticSummary({
+            comparison: data.summary.comparison,
+            finalProposal: data.summary.final_proposal,
+            dissent: data.summary.dissent ?? '',
+          })
         }
       })
       .catch(console.error)
@@ -97,8 +105,8 @@ export default function DebateView() {
   const aborted = !liveMode && debate?.status === 'error'
   // For aborted: the "current" (i.e., not-yet-completed) phase is highestStored + 1
   const currentPhase: DebatePhase = liveMode ? liveState.phase
-                    : aborted   ? (Math.min(highestStoredPhase + 1, 4) as DebatePhase)
-                                : 4
+                    : aborted   ? (Math.min(highestStoredPhase + 1, 6) as DebatePhase)
+                                : 6
   const done = liveMode ? liveState.done : debate?.status === 'done'
   const summary = liveMode ? (liveState.summary ?? staticSummary) : staticSummary
   const wsError = liveMode ? liveState.error : null
@@ -115,13 +123,16 @@ export default function DebateView() {
     if (id) window.open(`/api/debates/${id}/export`, '_blank')
   }
 
-  // Should we render each section?
-  // - Phase 2/3: always render (even if empty, to show structure)
-  // - Phase 4 (synthesis): only if synthesizer message exists OR debate reached phase 4
-  const phase4HasContent = synthesizer ? !!byPhase[4][synthesizer]?.content : false
-  const showPhase4 = phase4HasContent || currentPhase === 4 || done || !!summary
+  // Render rules:
+  // - Phase 2/3/4: always render (skeleton even if empty, to show structure)
+  // - Phase 5 (synthesis): once we've reached it OR summary exists
+  // - Phase 6 (review): once we've reached it OR any reviewer has output
+  const synthHasContent = synthesizer ? !!byPhase[PHASE_SYNTH][synthesizer]?.content : false
+  const showSynth = synthHasContent || currentPhase >= PHASE_SYNTH || done || !!summary
+  const reviewHasContent = MODELS.some(m => !!byPhase[PHASE_REVIEW][m]?.content)
+  const showReview = reviewHasContent || currentPhase >= PHASE_REVIEW || done
   const phaseSectionsToShow: DebatePhase[] = CONTENT_PHASES.filter(p =>
-    p !== 4 || showPhase4
+    (p !== PHASE_SYNTH || showSynth) && (p !== PHASE_REVIEW || showReview)
   )
 
   // Sticky in-page nav: jump to a phase's section
@@ -308,22 +319,38 @@ export default function DebateView() {
           {phaseSectionsToShow.map(p => {
             const isActive = liveMode && p === currentPhase && !done
             const isAbortedHere = aborted && p === currentPhase
-            // Phase 4 = single-column (synthesizer only) + inline summary
-            if (p === 4) {
+            // Phase V = single-column (synthesizer only) + inline summary
+            if (p === PHASE_SYNTH) {
               return (
                 <PhaseSection
                   key={p}
-                  phase={4}
-                  panels={byPhase[4]}
+                  phase={PHASE_SYNTH}
+                  panels={byPhase[PHASE_SYNTH]}
                   isActivePhase={isActive}
                   isAborted={isAbortedHere}
                   singleColumn={synthesizer}
                 >
                   {summary && (
-                    <SummarySection comparison={summary.comparison}
-                                    finalProposal={summary.finalProposal} />
+                    <SummarySection
+                      comparison={summary.comparison}
+                      finalProposal={summary.finalProposal}
+                      dissent={summary.dissent ?? ''}
+                    />
                   )}
                 </PhaseSection>
+              )
+            }
+            // Phase VI = three-column ratification but synthesizer abstains
+            if (p === PHASE_REVIEW) {
+              return (
+                <PhaseSection
+                  key={p}
+                  phase={PHASE_REVIEW}
+                  panels={byPhase[PHASE_REVIEW]}
+                  isActivePhase={isActive}
+                  isAborted={isAbortedHere}
+                  abstainModel={synthesizer}
+                />
               )
             }
             return (
@@ -342,16 +369,19 @@ export default function DebateView() {
   )
 }
 
-// Inline summary rendered inside the Phase IV section.
-// Two tabs: 异同对照 / 综合方案 (replaces the old footer SummaryPanel).
-function SummarySection({ comparison, finalProposal }:
-  { comparison: string; finalProposal: string }) {
-  const [tab, setTab] = useState<'comparison' | 'proposal'>('comparison')
-  const content = tab === 'comparison' ? comparison : finalProposal
+// Inline summary rendered inside the Phase V section.
+// Three tabs: 异同+裁决 / 综合方案 / 少数派意见.
+function SummarySection({ comparison, finalProposal, dissent }:
+  { comparison: string; finalProposal: string; dissent: string }) {
+  const [tab, setTab] = useState<'comparison' | 'proposal' | 'dissent'>('comparison')
+  const content = tab === 'comparison' ? comparison
+                : tab === 'proposal'   ? finalProposal
+                                       : dissent
 
   const TABS = [
-    { id: 'comparison' as const, roman: 'a', label: '异同对照' },
-    { id: 'proposal'   as const, roman: 'b', label: '综合方案' },
+    { id: 'comparison' as const, label: '异同 + 裁决' },
+    { id: 'proposal'   as const, label: '综合方案' },
+    ...(dissent ? [{ id: 'dissent' as const, label: '少数派意见' }] : []),
   ]
 
   return (
