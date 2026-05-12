@@ -74,32 +74,59 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     const msgs = messages.listByDebate(req.params.id)
     const summary = summaries.get(req.params.id)
 
-    const phaseNames: Record<number, string> = {
-      1: '开题',
-      2: '各自方案',
-      3: '匿名互评 + 排名',
-      4: '作者修订',
-      5: '综合迭代',
-      6: '终稿复核',
+    // Phase + model label tables — kept here on purpose; the web mirrors
+    // these in lib/phases.ts and lib/models.ts. If these get out of sync
+    // the export will just have slightly different labels than the page,
+    // not break.
+    const PHASE_LABEL: Record<number, { roman: string; name: string }> = {
+      2: { roman: 'I',   name: '各自方案' },
+      3: { roman: 'II',  name: '匿名互评 + 排名' },
+      4: { roman: 'III', name: '作者修订' },
+      5: { roman: 'IV',  name: '综合裁决' },
+      6: { roman: 'V',   name: '终稿复核' },
+    }
+    const MODEL_LABEL: Record<string, string> = {
+      claude: 'Claude', chatgpt: 'ChatGPT', deepseek: 'DeepSeek',
     }
 
-    let md = `# ${debate.topic}\n\n`
-    if (debate.principles) md += `**设计原则**：${debate.principles}\n\n`
-    md += `综合者：${debate.synthesizer}｜时间：${new Date(debate.created_at).toLocaleString('zh-CN')}\n\n---\n\n`
+    // The topic field accepts a pasted markdown document. Use only its
+    // first non-empty line (with leading #/list markers stripped) as the
+    // H1; the remainder goes into a separate "## 议题原文" section so the
+    // export's outline stays clean.
+    const topicLines = debate.topic.split('\n')
+    const firstNonEmpty = topicLines.findIndex(l => l.trim()) ?? -1
+    const firstLine = firstNonEmpty >= 0 ? topicLines[firstNonEmpty].trim() : ''
+    const titleLine = firstLine.replace(/^#+\s*/, '').replace(/^[*_>-]+\s*/, '').trim()
+    const restLines = firstNonEmpty >= 0 ? topicLines.slice(firstNonEmpty + 1).join('\n').trim() : ''
+
+    const dateStr = new Date(debate.created_at).toLocaleString('zh-CN')
+
+    let md = ''
+    md += `# ${titleLine || '（无标题）'}\n\n`
+    md += `*综合者 · ${MODEL_LABEL[debate.synthesizer] ?? debate.synthesizer} | ${dateStr}*\n\n`
+    if (debate.principles) {
+      md += `> **设计原则**：${debate.principles}\n\n`
+    }
+    if (restLines) {
+      md += `## 议题原文\n\n${restLines}\n\n`
+    }
+    md += `---\n\n`
 
     let currentPhase = 0
     for (const msg of msgs) {
       if (msg.phase !== currentPhase) {
         currentPhase = msg.phase
-        md += `## 第 ${currentPhase} 阶段：${phaseNames[currentPhase] ?? currentPhase}\n\n`
+        const meta = PHASE_LABEL[currentPhase]
+        const header = meta ? `${meta.roman} · ${meta.name}` : `第 ${currentPhase} 阶段`
+        md += `## ${header}\n\n`
       }
-      md += `### ${msg.model}\n\n${msg.content}\n\n`
+      md += `### ${MODEL_LABEL[msg.model] ?? msg.model}\n\n${msg.content}\n\n`
     }
 
     if (summary) {
-      md += `## 异同点对照 + 关键分歧裁决\n\n${summary.comparison}\n\n`
-      md += `## 最终综合方案\n\n${summary.final_proposal}\n\n`
-      if (summary.dissent) md += `## 少数派意见\n\n${summary.dissent}\n\n`
+      md += `## 终稿 · 异同对照 + 关键分歧裁决\n\n${summary.comparison}\n\n`
+      md += `## 终稿 · 迭代后的综合方案\n\n${summary.final_proposal}\n\n`
+      if (summary.dissent) md += `## 终稿 · 少数派意见\n\n${summary.dissent}\n\n`
     }
 
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8')
