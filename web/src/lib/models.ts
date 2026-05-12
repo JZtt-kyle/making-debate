@@ -1,4 +1,7 @@
-import type { ModelName } from '../hooks/useDebateSocket.ts'
+// Canonical domain type for the participating models. Server's adapter
+// registry (server/src/browser/adapters/index.ts) is the upstream source of
+// truth — keep this list in lockstep.
+export type ModelName = 'claude' | 'chatgpt' | 'deepseek'
 
 // Single source of truth for per-model display metadata on the web side.
 // Server-side model names live in server/src/browser/adapters/index.ts; that

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ModelName } from '../lib/models.ts'
+import type { DebatePhase } from '../lib/phases.ts'
 
-export type ModelName = 'claude' | 'chatgpt' | 'deepseek'
-// 5-phase iteration: 1=conceptual; 2-6 are the five working phases.
-export type DebatePhase = 1 | 2 | 3 | 4 | 5 | 6
+// Re-export so existing callers that imported these via this hook keep working.
+// New code should import from lib/models.ts and lib/phases.ts directly.
+export type { ModelName, DebatePhase }
 
 export interface WSEvent {
   type: 'phase_started' | 'delta' | 'message_complete' | 'summary' | 'done' | 'error'

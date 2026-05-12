@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { MODEL_META } from '../lib/models.ts'
-import type { ModelName } from '../hooks/useDebateSocket.ts'
+import type { ModelName } from '../lib/models.ts'
 
 type LoginStatus = Record<ModelName, boolean>
 type ClaudeModel = 'sonnet-4-6' | 'opus-4-7'

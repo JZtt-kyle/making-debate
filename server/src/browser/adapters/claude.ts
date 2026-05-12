@@ -99,6 +99,13 @@ export class ClaudeAdapter implements SiteAdapter {
     await sendBtn.click()
   }
 
+  async hasAssistantMessage(): Promise<boolean> {
+    return this.page.evaluate(
+      sel => document.querySelectorAll(sel).length > 0,
+      SEL.responseSelector,
+    ).catch(() => false)
+  }
+
   async readLastAssistantMessage(): Promise<string> {
     const html = await this.page.evaluate((sel) => {
       const els = document.querySelectorAll(sel)

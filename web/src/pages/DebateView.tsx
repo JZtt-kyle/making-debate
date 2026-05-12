@@ -5,8 +5,10 @@ import PhaseFooterNav from '../components/PhaseFooterNav.tsx'
 import {
   PhaseTwoView, PhaseThreeView, PhaseFourView, PhaseFiveView, PhaseSixView,
 } from '../components/phases/index.ts'
-import { useDebateSocket, ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
-import { MODELS } from '../lib/models.ts'
+import { useDebateSocket, type ModelStream } from '../hooks/useDebateSocket.ts'
+import { useRefetchMessage } from '../hooks/useRefetchMessage.ts'
+import { MODELS, type ModelName } from '../lib/models.ts'
+import type { DebatePhase } from '../lib/phases.ts'
 import { displayTitle, topicBody } from '../lib/displayTopic.ts'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -152,42 +154,10 @@ export default function DebateView() {
     if (id) window.open(`/api/debates/${id}/export`, '_blank')
   }
 
-  // Re-grab the latest assistant message from a model's live tab for a
-  // given phase. Used when the orchestrator stored an error placeholder
-  // (e.g., rate-limit) but the model's web UI later showed the real reply.
-  const refetch = async (phase: DebatePhase, model: ModelName) => {
-    if (!id) return
-    try {
-      const res = await fetch(`/api/debates/${id}/messages/refetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phase, model }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }))
-        alert(`重新获取失败: ${err.error ?? res.statusText}`)
-        return
-      }
-      // Reload the debate page state with the updated content.
-      const detail = await fetch(`/api/debates/${id}`).then(r => r.json())
-      const streams: Record<ModelName, ModelStream[]> = { claude: [], chatgpt: [], deepseek: [] }
-      for (const msg of detail.messages as StoredMessage[]) {
-        streams[msg.model].push({
-          phase: msg.phase as DebatePhase, content: msg.content, complete: true,
-        })
-      }
-      setStaticStreams(streams)
-      if (detail.summary) {
-        setStaticSummary({
-          comparison: detail.summary.comparison,
-          finalProposal: detail.summary.final_proposal,
-          dissent: detail.summary.dissent ?? '',
-        })
-      }
-    } catch (err) {
-      alert(`重新获取出错: ${err}`)
-    }
-  }
+  const refetch = useRefetchMessage(id, ({ streams, summary }) => {
+    setStaticStreams(streams)
+    setStaticSummary(summary)
+  })
 
   // Is THE PHASE BEING VIEWED currently active in the debate?
   const isViewPhaseActive = liveMode && viewPhase === debateCurrentPhase && !done

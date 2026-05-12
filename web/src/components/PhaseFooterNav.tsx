@@ -1,4 +1,4 @@
-import { DebatePhase } from '../hooks/useDebateSocket.ts'
+import type { DebatePhase } from '../lib/phases.ts'
 import { getPhaseMeta, PHASE_MIN, PHASE_MAX } from '../lib/phases.ts'
 
 interface Props {

@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ModelName, ModelStream } from '../../hooks/useDebateSocket.ts'
+import type { ModelName } from '../../lib/models.ts'
+import type { ModelStream } from '../../hooks/useDebateSocket.ts'
 import { MODEL_META } from '../../lib/models.ts'
 import PhaseHeader from './PhaseHeader.tsx'
 

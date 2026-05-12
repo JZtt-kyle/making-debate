@@ -125,6 +125,13 @@ export class DeepSeekAdapter implements SiteAdapter {
     }
   }
 
+  async hasAssistantMessage(): Promise<boolean> {
+    return this.page.evaluate(
+      selectors => selectors.some(s => document.querySelectorAll(s).length > 0),
+      SEL.responseContainerSelectors,
+    ).catch(() => false)
+  }
+
   async readLastAssistantMessage(): Promise<string> {
     const html = await this.page.evaluate((selectors) => {
       for (const sel of selectors) {

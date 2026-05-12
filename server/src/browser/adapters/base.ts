@@ -26,6 +26,13 @@ export interface SiteAdapter {
    * limit notice) but the model later filled in a real reply that we missed.
    */
   readLastAssistantMessage(): Promise<string>
+  /**
+   * Returns true when at least one assistant message has rendered on the
+   * current conversation page. Used after a reload to poll for content to
+   * appear before reading. Keeps DOM-selector knowledge per-site here in
+   * the adapter rather than leaking into the HTTP route.
+   */
+  hasAssistantMessage(): Promise<boolean>
   configure?(config: ModelConfig): Promise<void>
 }
 

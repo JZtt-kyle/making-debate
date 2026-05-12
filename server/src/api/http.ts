@@ -138,18 +138,14 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
       adapter.setPage(page)
       // Reload first — some sites cache a transient error placeholder that
       // gets replaced by the real reply once the page refreshes (most often
-      // ChatGPT's "Unusual activity" notice). Then wait until at least one
-      // assistant message renders, up to 15s.
+      // ChatGPT's "Unusual activity" notice). Then poll the adapter (which
+      // owns the per-site selectors) until at least one assistant message
+      // renders, up to 15s.
       await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
       await adapter.ensureReady()
       const deadline = Date.now() + 15_000
       while (Date.now() < deadline) {
-        const n = await page.evaluate(() =>
-          document.querySelectorAll(
-            '[data-message-author-role="assistant"], .font-claude-response, .ds-markdown'
-          ).length
-        ).catch(() => 0)
-        if (n > 0) break
+        if (await adapter.hasAssistantMessage()) break
         await new Promise(r => setTimeout(r, 500))
       }
       const content = await adapter.readLastAssistantMessage()

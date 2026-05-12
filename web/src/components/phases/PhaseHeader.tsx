@@ -1,4 +1,4 @@
-import type { DebatePhase } from '../../hooks/useDebateSocket.ts'
+import type { DebatePhase } from '../../lib/phases.ts'
 import { getPhaseMeta } from '../../lib/phases.ts'
 
 // Shared section header for every PhaseView. Roman + title on the left,

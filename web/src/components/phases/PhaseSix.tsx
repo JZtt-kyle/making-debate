@@ -1,9 +1,11 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ModelName, ModelStream } from '../../hooks/useDebateSocket.ts'
+import type { ModelName } from '../../lib/models.ts'
+import type { ModelStream } from '../../hooks/useDebateSocket.ts'
 import { MODELS, MODEL_META } from '../../lib/models.ts'
 import { parseVerdict } from '../../lib/parseDebateOutput.ts'
 import PhaseHeader from './PhaseHeader.tsx'
+import RefetchButton from '../RefetchButton.tsx'
 
 // Phase VI — 终稿复核. Synthesizer doesn't review own work; the other two
 // each get a card with a RATIFY/VETO badge parsed from the stream.
@@ -140,25 +142,7 @@ function ReviewerCard({ model, stream, isActivePhase, onRefetch }: {
           </span>
         )}
         {onRefetch && !isActivePhase && (
-          <button
-            onClick={onRefetch}
-            title="重新从模型 tab 抓取本格的最新回复"
-            style={{
-              marginLeft: verdict ? '0.6rem' : 'auto',
-              background: 'transparent',
-              border: '1px solid var(--rule)',
-              borderRadius: 0,
-              padding: '0.18rem 0.55rem',
-              color: 'var(--paper-mute)',
-              fontFamily: 'var(--mono)',
-              fontSize: 9.5,
-              letterSpacing: '0.18em',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-            }}
-          >
-            重新获取 ↻
-          </button>
+          <RefetchButton onClick={onRefetch} hasNeighborOnRight={!!verdict} />
         )}
       </header>
 

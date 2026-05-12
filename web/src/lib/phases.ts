@@ -1,4 +1,6 @@
-import type { DebatePhase } from '../hooks/useDebateSocket.ts'
+// 5-phase iteration: 1 = conceptual "开题" (no model output);
+// 2-6 = the five working phases (each is a DB phase id stored in messages).
+export type DebatePhase = 1 | 2 | 3 | 4 | 5 | 6
 
 // Single source of truth for phase metadata on the web side.
 // Server's DB phase ids are 1-6 where 1 is conceptual "开题" with no model

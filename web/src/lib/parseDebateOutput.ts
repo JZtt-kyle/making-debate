@@ -11,7 +11,7 @@
 //    the prompt definition)
 //  - this file
 
-import type { ModelName } from '../hooks/useDebateSocket.ts'
+import type { ModelName } from './models.ts'
 
 // -------- Anonymous labels ------------------------------------------------
 

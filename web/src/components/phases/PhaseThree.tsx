@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import type { ModelName, ModelStream } from '../../hooks/useDebateSocket.ts'
+import type { ModelName } from '../../lib/models.ts'
+import type { ModelStream } from '../../hooks/useDebateSocket.ts'
 import { MODELS, MODEL_META, MODEL_ABBR } from '../../lib/models.ts'
 import {
   parseCritiquesByTarget,

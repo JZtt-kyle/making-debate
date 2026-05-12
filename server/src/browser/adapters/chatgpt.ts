@@ -53,6 +53,12 @@ export class ChatGPTAdapter implements SiteAdapter {
     await sendBtn.click()
   }
 
+  async hasAssistantMessage(): Promise<boolean> {
+    return this.page.evaluate(() =>
+      document.querySelectorAll('[data-message-author-role="assistant"]').length > 0
+    ).catch(() => false)
+  }
+
   async readLastAssistantMessage(): Promise<string> {
     const html = await this.page.evaluate(() => {
       const msgs = document.querySelectorAll('[data-message-author-role="assistant"]')

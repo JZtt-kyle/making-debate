@@ -1,4 +1,5 @@
-import type { ModelName, ModelStream } from '../../hooks/useDebateSocket.ts'
+import type { ModelName } from '../../lib/models.ts'
+import type { ModelStream } from '../../hooks/useDebateSocket.ts'
 import { MODELS } from '../../lib/models.ts'
 import ModelPanel from '../ModelPanel.tsx'
 
