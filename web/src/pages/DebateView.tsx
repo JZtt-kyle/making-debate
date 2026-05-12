@@ -150,19 +150,33 @@ export default function DebateView() {
     : ''
   const synthesizer = debate?.synthesizer as ModelName | undefined
 
-  // Download via a temporary <a download> click. window.open(url, '_blank')
-  // sometimes loses the Content-Disposition filename on Chrome and produces
-  // an extensionless file ("export"); the download attribute pins the name.
-  const exportMd = () => {
+  // Download via blob URL: fetch the markdown ourselves, wrap it in a blob,
+  // then click an <a download="..."> against the blob URL. Browsers honor
+  // the download attribute on same-origin blob URLs unconditionally, so the
+  // filename is guaranteed regardless of Content-Disposition header
+  // handling. Avoids the "extensionless 'export'" issue.
+  const exportMd = async () => {
     if (!id) return
     const filename = `debate-${id.slice(0, 8)}.md`
-    const a = document.createElement('a')
-    a.href = `/api/debates/${id}/export`
-    a.download = filename
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    try {
+      const res = await fetch(`/api/debates/${id}/export`)
+      if (!res.ok) {
+        alert(`导出失败：HTTP ${res.status}`)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      alert(`导出出错：${err}`)
+    }
   }
 
   const refetch = useRefetchMessage(id, ({ streams, summary }) => {
