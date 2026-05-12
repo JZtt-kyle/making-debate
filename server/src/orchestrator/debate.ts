@@ -30,8 +30,11 @@ export interface WSEvent {
 type EventEmitter = (event: WSEvent) => void
 
 // Drive one (phase, model) cell of the debate.
-// Every call starts a FRESH conversation — true anonymity for Phase 3, and
-// clean isolation between authoring/critiquing/revising/reviewing roles.
+// `startNew` true → open a fresh conversation and apply model config.
+// `startNew` false → continue in whatever conversation this adapter is on
+// (intended use: Phase 2 opens, Phases 3-6 continue, so each model has a
+// single chat thread per debate). Continuation also gives the model its own
+// prior phases in context, so the per-phase prompts can be terser.
 async function runModel(
   debateId: string,
   phase: DebatePhase,
@@ -39,13 +42,16 @@ async function runModel(
   adapter: SiteAdapter,
   prompt: string,
   emit: EventEmitter,
+  startNew: boolean,
   config?: ModelConfig
 ): Promise<string> {
   emit({ type: 'phase_started', debateId, phase, model })
   try {
-    await adapter.newConversation()
-    if (config && adapter.configure) {
-      await adapter.configure(config)
+    if (startNew) {
+      await adapter.newConversation()
+      if (config && adapter.configure) {
+        await adapter.configure(config)
+      }
     }
     await adapter.sendMessage(prompt)
     const content = await adapter.streamResponse(delta => {
@@ -83,28 +89,35 @@ export async function runDebate(
   }
 
   // -------------------------------------------------------------------------
-  // Phase 2 — 各自方案 (parallel, fresh conversation per model)
+  // Phase 2 — 各自方案 (parallel, opens a FRESH conversation per model).
+  // All later phases continue in this same conversation for each model.
   // -------------------------------------------------------------------------
   const phase2Results: { name: ModelName; content: string }[] = []
   await Promise.all(MODELS.map(async model => {
     const prompt = PHASE2_PROMPT(topic, principles, model)
     const content = await runModel(
-      debateId, 2, model, adapters[model], prompt, emit, modelConfigs[model])
+      debateId, 2, model, adapters[model], prompt, emit, true, modelConfigs[model])
     phase2Results.push({ name: model, content })
   }))
   // Re-sort to MODELS order (parallel resolves out-of-order)
   phase2Results.sort((a, b) => MODELS.indexOf(a.name) - MODELS.indexOf(b.name))
 
   // -------------------------------------------------------------------------
-  // Phase 3 — 匿名互评 + 排名 (parallel, fresh conversation = TRUE anonymity)
-  // The evaluator no longer has its own Phase 2 thread in context.
+  // Phase 3 — 互评 + 排名 (parallel, continues same conversation).
+  // The model has its own Phase 2 proposal in context, so the prompt does
+  // not pretend full anonymity — it tells the model "one of these is yours,
+  // evaluate fairly anyway".
   // -------------------------------------------------------------------------
   const anonymized = anonymizeProposals(phase2Results)
+  const labelByName: Record<ModelName, AnonLabel> = Object.fromEntries(
+    anonymized.map(a => [a.originalName, a.label])
+  ) as Record<ModelName, AnonLabel>
+
   const phase3Results: { name: ModelName; content: string; ranking: AnonLabel[] | null }[] = []
   await Promise.all(MODELS.map(async model => {
-    const prompt = PHASE3_PROMPT(anonymized)
+    const prompt = PHASE3_PROMPT(anonymized, labelByName[model])
     const content = await runModel(
-      debateId, 3, model, adapters[model], prompt, emit, modelConfigs[model])
+      debateId, 3, model, adapters[model], prompt, emit, false)
     const ranking = parseRanking(content)
     phase3Results.push({ name: model, content, ranking })
     if (ranking) {
@@ -120,55 +133,68 @@ export async function runDebate(
     aggregated.map(a => `${a.originalName}(${a.label})=${a.avgRank.toFixed(2)}`).join(', '))
 
   // -------------------------------------------------------------------------
-  // Phase 4 — 作者修订 (NEW: parallel, fresh conversation)
-  // Each author sees its own original + ALL critiques + its anonymous label
-  // (so it knows which critiques target it). This is where real iteration
-  // happens — currently the system's biggest gap before this change.
+  // Phase 4 — 作者修订 (parallel, continues same conversation).
+  // The author's own original proposal AND its own Phase 3 critique are in
+  // context, so the prompt only needs to hand over the OTHER reviewers'
+  // critiques + the aggregated ranking.
   // -------------------------------------------------------------------------
-  const labelByName: Record<ModelName, AnonLabel> = Object.fromEntries(
-    anonymized.map(a => [a.originalName, a.label])
-  ) as Record<ModelName, AnonLabel>
-
   const phase4Results: { name: ModelName; content: string }[] = []
   await Promise.all(MODELS.map(async model => {
     const myLabel = labelByName[model]
-    const myOriginal = phase2Results.find(p => p.name === model)?.content ?? ''
-    const allCritiques = phase3Results.map(r => ({ reviewer: r.name, content: r.content }))
-    const prompt = PHASE4_PROMPT(model, myLabel, myOriginal, allCritiques, aggregated)
+    const otherCritiques = phase3Results
+      .filter(r => r.name !== model)
+      .map(r => ({ reviewer: r.name, content: r.content }))
+    const prompt = PHASE4_PROMPT(model, myLabel, otherCritiques, aggregated)
     const content = await runModel(
-      debateId, 4, model, adapters[model], prompt, emit, modelConfigs[model])
+      debateId, 4, model, adapters[model], prompt, emit, false)
     phase4Results.push({ name: model, content })
   }))
   phase4Results.sort((a, b) => MODELS.indexOf(a.name) - MODELS.indexOf(b.name))
 
   // -------------------------------------------------------------------------
-  // Phase 5 — 综合 + 裁决 + 少数派意见 (single, synthesizer only)
-  // Operates on the REVISED proposals (not the originals), plus the critique
-  // record, plus the ranking. Outputs four sections; parser splits them.
+  // Phase 5 — 综合 + 裁决 + 少数派意见 (synthesizer only, continues same chat).
+  // Its own Phase 2-4 are in context; the prompt provides only the OTHER 2
+  // models' revisions + critiques.
   // -------------------------------------------------------------------------
   const synthAdapter = adapters[synthesizer]
+  const otherRevisions = phase4Results.filter(r => r.name !== synthesizer)
+  const otherCritiquesForSynth = phase3Results
+    .filter(r => r.name !== synthesizer)
+    .map(r => ({ reviewer: r.name, content: r.content }))
   const synthPrompt = PHASE5_PROMPT(
     synthesizer, topic, principles,
-    phase4Results,
-    phase3Results.map(r => ({ reviewer: r.name, content: r.content })),
+    otherRevisions,
+    otherCritiquesForSynth,
     aggregated,
   )
   const summaryContent = await runModel(
-    debateId, 5, synthesizer, synthAdapter, synthPrompt, emit, modelConfigs[synthesizer])
+    debateId, 5, synthesizer, synthAdapter, synthPrompt, emit, false)
+
+  // Defensive: if the synthesizer's stream returned empty / whitespace-only
+  // content, do NOT run Phase 6 (reviewers would have nothing to ratify) and
+  // do NOT mark the debate as done. Mark it error so the UI surfaces the
+  // failure instead of pretending success with an empty summary.
+  if (!summaryContent.trim()) {
+    const msg = `综合者 ${synthesizer} 在 Phase 5 返回空内容；跳过 Phase 6 复核。`
+    console.error(`[debate] ${msg}`)
+    emit({ type: 'error', debateId, phase: 5, model: synthesizer, error: msg })
+    debates.setStatus(debateId, 'error')
+    return
+  }
 
   const { comparison, finalProposal, dissent } = parsePhase5Output(summaryContent)
   summaries.upsert(debateId, comparison, finalProposal, dissent)
   emit({ type: 'summary', debateId, content: JSON.stringify({ comparison, finalProposal, dissent }) })
 
   // -------------------------------------------------------------------------
-  // Phase 6 — 终稿复核 (NEW: parallel ratify/veto by non-synthesizers)
-  // Lightweight check on the synthesis. Synthesizer doesn't review own work.
+  // Phase 6 — 终稿复核 (parallel ratify/veto by non-synthesizers, continues
+  // each reviewer's own conversation).
   // -------------------------------------------------------------------------
   const reviewers = MODELS.filter(m => m !== synthesizer)
   await Promise.all(reviewers.map(async model => {
     const prompt = PHASE6_PROMPT(model, synthesizer, comparison, finalProposal, dissent)
     const content = await runModel(
-      debateId, 6, model, adapters[model], prompt, emit, modelConfigs[model])
+      debateId, 6, model, adapters[model], prompt, emit, false)
     const { verdict, reason } = parseVerdict(content)
     console.log(`[debate] ${model} verdict: ${verdict}${reason ? ` — ${reason}` : ''}`)
   }))

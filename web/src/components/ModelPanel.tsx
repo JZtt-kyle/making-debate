@@ -4,10 +4,12 @@ import remarkGfm from 'remark-gfm'
 import { ModelName, ModelStream } from '../hooks/useDebateSocket.ts'
 import { MODEL_META } from '../lib/models.ts'
 
-// Collapsed cap for completed columns. Picked so a typical 4-section Phase 2
-// proposal (≈1800 chars) shows ~half — enough to read structure, comparable
-// across all three columns. Live-writing columns ignore the cap.
-const COLLAPSED_MAX_PX = 560
+// Fixed height for the content area in all states EXCEPT user-expanded.
+// During writing the container becomes its own scroll viewport so 3 columns
+// growing at different rates no longer reflow the page (was causing the
+// "screen-keeps-shaking" jitter). When complete and collapsed, overflow is
+// hidden + a fade gradient hints there's more content.
+const CONTENT_MAX_PX = 560
 
 interface Props {
   model: ModelName
@@ -25,31 +27,35 @@ interface Props {
 // whitespace. Auto-scrolls the tail during live writing.
 export default function ModelPanel({ model, stream, isActivePhase, abstain, badge }: Props) {
   const meta = MODEL_META[model]
-  const bottomRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [userExpanded, setUserExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
 
   const isWriting = !!stream && !stream.complete && isActivePhase && !abstain
-  // While streaming we always show full content (the writer's tail needs to
-  // be visible). When complete, respect user choice; default = collapsed.
-  const effectiveCollapsed = !isWriting && !userExpanded
 
-  // Re-measure whenever content grows. scrollHeight is the natural height
-  // ignoring any max-height/overflow rule on the parent.
+  // Re-measure on every content change. scrollHeight is the natural height
+  // ignoring max-height — when it exceeds the cap, we have overflowing content.
   useLayoutEffect(() => {
     if (!contentRef.current || abstain) {
       setOverflows(false)
       return
     }
-    setOverflows(contentRef.current.scrollHeight > COLLAPSED_MAX_PX + 32)
+    setOverflows(contentRef.current.scrollHeight > CONTENT_MAX_PX + 32)
   }, [stream?.content, abstain])
 
+  // Keep the streaming tail visible by scrolling INSIDE the content container
+  // (not the page). scrollTop assignment instead of scrollIntoView({smooth})
+  // avoids fighting between 3 simultaneously streaming columns.
   useEffect(() => {
-    if (isWriting) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    if (isWriting && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight
+    }
   }, [stream?.content, isWriting])
 
-  const showToggle = overflows && !isWriting && !abstain
+  // Toggle only appears once the phase finishes — during writing the
+  // container scrolls internally, so the user has access to all the text
+  // already; toggling would just reflow the page and bring back jitter.
+  const showToggle = overflows && !isActivePhase && !abstain
 
   return (
     <div style={{
@@ -124,12 +130,18 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
       <div style={{ position: 'relative', minWidth: 0 }}>
         <div
           ref={contentRef}
-          className="prose"
+          className="prose stream-scroll"
           style={{
             minWidth: 0,
-            maxHeight: effectiveCollapsed && overflows ? COLLAPSED_MAX_PX : 'none',
-            overflow: effectiveCollapsed && overflows ? 'hidden' : 'visible',
-            transition: 'max-height 0.4s cubic-bezier(0.2,0.7,0.2,1)',
+            // During an active phase we LOCK the height across all 3 columns
+            // (height: fixed) so the page does not reflow as columns grow at
+            // different rates. Once the phase ends we drop to maxHeight only,
+            // letting shorter columns shrink to their natural height.
+            height: isActivePhase && !userExpanded ? CONTENT_MAX_PX : undefined,
+            maxHeight: !userExpanded ? CONTENT_MAX_PX : 'none',
+            overflow: isActivePhase ? 'auto'
+                     : !userExpanded && overflows ? 'hidden'
+                                                  : 'visible',
           }}
         >
           {abstain ? (
@@ -158,11 +170,12 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
               {isWriting && <span className="caret" style={{ background: meta.tone }} />}
             </>
           )}
-          <div ref={bottomRef} />
         </div>
 
-        {/* Fade-out gradient when collapsed and overflowing */}
-        {effectiveCollapsed && overflows && (
+        {/* Fade-out gradient when the phase is done + collapsed + overflowing.
+            Hidden while the phase is active because the container scrolls
+            internally there. */}
+        {!isActivePhase && !userExpanded && overflows && (
           <div style={{
             position: 'absolute',
             left: 0,

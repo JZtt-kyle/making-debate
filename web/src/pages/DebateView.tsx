@@ -7,6 +7,9 @@ import {
 } from '../components/phases/index.ts'
 import { useDebateSocket, ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
 import { MODELS } from '../lib/models.ts'
+import { displayTitle, topicBody } from '../lib/displayTopic.ts'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface StoredMessage {
   phase: number
@@ -49,6 +52,7 @@ export default function DebateView() {
   const [staticSummary, setStaticSummary] = useState<
     { comparison: string; finalProposal: string; dissent?: string } | null
   >(null)
+  const [topicExpanded, setTopicExpanded] = useState(false)
 
   const liveState = useDebateSocket(id, liveMode)
 
@@ -196,7 +200,7 @@ export default function DebateView() {
           lineHeight: 1.12,
           maxWidth: '92%',
         }}>
-          {debate?.topic ?? '加载中…'}
+          {displayTitle(debate?.topic, 160) || '加载中…'}
         </h1>
 
         <div className="byline" style={{
@@ -218,6 +222,42 @@ export default function DebateView() {
             }}>{synthesizer}</em></span>
           )}
         </div>
+
+        {topicBody(debate?.topic) && (
+          <div style={{ marginBottom: '1.2rem', maxWidth: '92%' }}>
+            <button
+              onClick={() => setTopicExpanded(v => !v)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 0,
+                padding: '0.3rem 0',
+                color: 'var(--paper-mute)',
+                fontFamily: 'var(--mono)',
+                fontSize: 10.5,
+                letterSpacing: '0.2em',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                marginBottom: '0.5rem',
+              }}
+            >
+              {topicExpanded ? '收起议题原文 ▴' : '查看议题原文 ▾'}
+            </button>
+            {topicExpanded && (
+              <div className="prose" style={{
+                fontFamily: 'var(--serif-body)',
+                fontSize: 14,
+                color: 'var(--paper-mute)',
+                borderLeft: '2px solid var(--rule)',
+                paddingLeft: '0.9rem',
+              }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {topicBody(debate?.topic)}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+        )}
 
         {debate?.principles && (
           <p style={{

@@ -42,10 +42,10 @@ ${principles ? `【设计原则 / 约束条件】\n${principles}\n` : ''}
 
 
 // ---------------------------------------------------------------------------
-// Phase 3 — 匿名互评 + 排名
-// Run in a FRESH conversation per model so the evaluator does not have its
-// own Phase 2 proposal in context — this is what makes the anonymity real.
-// Tight 3-bullet critique structure (≤80 chars each) forces specificity.
+// Phase 3 — 互评 + 排名 (continues the same conversation)
+// The reviewer's own Phase 2 proposal is in conversation context, so we are
+// honest with the model: one of these three is yours, evaluate fairly anyway.
+// Anonymity for the *other two* is preserved by hiding the authors.
 // Output schema (used by parsers.ts):
 //   ### 对方案甲 (or ####)
 //   - **决定性缺陷**：...
@@ -55,7 +55,7 @@ ${principles ? `【设计原则 / 约束条件】\n${principles}\n` : ''}
 //   FINAL RANKING:
 //   1. 方案X / 2. 方案Y / 3. 方案Z
 // ---------------------------------------------------------------------------
-export const PHASE3_PROMPT = (anonymized: AnonProposal[]): string => {
+export const PHASE3_PROMPT = (anonymized: AnonProposal[], myLabel: AnonLabel): string => {
   const proposalsText = anonymized
     .map(p => `=== 方案${p.label} ===\n${p.content}`)
     .join('\n\n')
@@ -63,9 +63,9 @@ export const PHASE3_PROMPT = (anonymized: AnonProposal[]): string => {
   const labelList = anonymized.map(p => `方案${p.label}`).join(' / ')
 
   return `
-【匿名互评与排名阶段】
+【互评与排名阶段】
 
-以下是同一议题上的三份方案。三份方案的作者已被匿名，请把它们当作三份独立的提案一视同仁地评估。
+以下是同一议题上的三份方案。**其中「方案${myLabel}」是你刚才提出的方案**，另外两份分别来自另外两个 AI 模型。你的目标不是为自己辩护，而是为最终方案的质量负责——请把它们当作三份独立的提案一视同仁地评估。
 
 ${proposalsText}
 
@@ -105,41 +105,45 @@ FINAL RANKING:
 // anonymous label they were assigned), and the aggregated ranking. They must
 // produce a revised proposal that explicitly addresses each critique.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phase 4 — 作者修订 (continues the same conversation)
+// The author already has its own Phase 2 proposal AND its own Phase 3
+// critique in context, so the prompt only feeds the OTHER reviewers'
+// critiques + the aggregated ranking.
+// ---------------------------------------------------------------------------
 export const PHASE4_PROMPT = (
   modelName: ModelName,
   myLabel: AnonLabel,
-  myOriginalProposal: string,
-  allCritiques: { reviewer: ModelName; content: string }[],
+  otherCritiques: { reviewer: ModelName; content: string }[],
   aggregated: AggregatedRanking[],
 ): string => {
   const myRank = aggregated.find(a => a.label === myLabel)
   const rankLine = myRank && myRank.voteCount > 0
-    ? `你的方案（在盲审中被标为「方案${myLabel}」）平均排名 ${myRank.avgRank.toFixed(2)}（共 ${myRank.voteCount} 票），在三份方案中位列第 ${aggregated.findIndex(a => a.label === myLabel) + 1}。`
+    ? `你的方案（标签「方案${myLabel}」）平均排名 ${myRank.avgRank.toFixed(2)}（共 ${myRank.voteCount} 票），在三份方案中位列第 ${aggregated.findIndex(a => a.label === myLabel) + 1}。`
     : `（本轮排名信号缺失）`
 
-  const critiquesText = allCritiques
-    .map(c => `--- 来自评审者 ${c.reviewer} 的盲审意见 ---\n${c.content}`)
-    .join('\n\n')
+  const critiquesText = otherCritiques.length > 0
+    ? otherCritiques
+        .map(c => `--- 来自另一位评审者 ${c.reviewer} 的意见 ---\n${c.content}`)
+        .join('\n\n')
+    : '（其余评审者意见缺失）'
 
   return `
 【作者修订阶段】
 
-你是 ${modelName}。**重要背景**：在上一轮匿名互评中，你的方案被标为「方案${myLabel}」——但评审者并不知道这是你写的。下面是匿名同行对全部三份方案的批评，请重点关注其中针对「方案${myLabel}」（也就是你）的部分。
+你是 ${modelName}。你刚才在上一条消息中已经评审过三份方案（其中「方案${myLabel}」是你自己的初步方案）。下面是另外两位评审者对全部三份方案的批评，请重点关注其中针对「方案${myLabel}」（也就是你）的部分。
 
-【你的原方案】
-${myOriginalProposal}
-
-【三位评审者的盲审意见（全部，请关注针对方案${myLabel}的部分）】
+【另外两位评审者的意见】
 ${critiquesText}
 
-【匿名排名结果】
+【三方排名汇总】
 ${rankLine}
 
 【你的任务】
 请严格按以下三个小节输出：
 
 ## 一、对针对我的批评的逐条回应
-把所有"针对方案${myLabel}"的"决定性缺陷"和"具体改动"提炼出来，逐条给出你的回应。每条 ≤ 50 字，明确分类为下列之一：
+把所有"针对方案${myLabel}"的"决定性缺陷"和"具体改动"提炼出来（包括你自己上一条消息里给方案${myLabel}写下的批评），逐条给出你的回应。每条 ≤ 50 字，明确分类为下列之一：
 - **接受** — 我同意，将在修订中改正
 - **反驳** — 这条批评建立在错误前提上，理由是…
 - **反提案** — 批评指出了真实问题但建议的方向不对，我提议改为…
@@ -170,17 +174,19 @@ export const PHASE5_PROMPT = (
   synthesizerName: ModelName,
   topic: string,
   principles: string,
-  revisedProposals: { name: ModelName; content: string }[],
-  allCritiques: { reviewer: ModelName; content: string }[],
+  otherRevisions: { name: ModelName; content: string }[],
+  otherCritiques: { reviewer: ModelName; content: string }[],
   aggregated: AggregatedRanking[],
 ): string => {
-  const revisions = revisedProposals
+  const revisions = otherRevisions
     .map(r => `=== ${r.name} 的修订稿 ===\n${r.content}`)
     .join('\n\n')
 
-  const critiques = allCritiques
-    .map(c => `=== 评审者 ${c.reviewer} 的盲审意见 ===\n${c.content}`)
-    .join('\n\n')
+  const critiques = otherCritiques.length > 0
+    ? otherCritiques
+        .map(c => `=== 评审者 ${c.reviewer} 的意见 ===\n${c.content}`)
+        .join('\n\n')
+    : '（其余评审者意见缺失）'
 
   const rankingSection = aggregated.some(a => a.voteCount > 0)
     ? `
@@ -200,15 +206,15 @@ ${aggregated.map((a, i) =>
   return `
 【综合迭代阶段】
 
-你是综合者 ${synthesizerName}。三方已经各自经历了「提案 → 被匿名批评 → 修订」三步，下面是他们的修订稿、原始的盲审意见、和排名汇总。请把它们综合成一份比任何单一方案都更完整的终稿。
+你是综合者 ${synthesizerName}。三方已经各自经历了「提案 → 互评 → 修订」三步——**你自己的提案、批评、修订稿都在上文中**。下面是另外两位的修订稿、批评意见、和排名汇总。请把它们综合成一份比任何单一方案都更完整的终稿。
 
 【议题】
 ${topic}
 ${principlesBlock}
-【三方修订稿】
+【另外两位的修订稿】
 ${revisions}
 
-【三方原始盲审意见（供你识别仍未被妥善回应的批评）】
+【另外两位的批评意见（供你识别仍未被妥善回应的关键风险）】
 ${critiques}${rankingSection}
 
 【你的任务】

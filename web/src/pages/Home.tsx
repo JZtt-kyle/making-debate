@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { displayTitle } from '../lib/displayTopic.ts'
 
 interface DebateRow {
   id: string
@@ -260,7 +261,7 @@ export default function Home() {
                       lineHeight: 1.35,
                       marginBottom: '0.3rem',
                     }}>
-                      {d.topic}
+                      {displayTitle(d.topic, 80)}
                     </h3>
                     <div className="byline faint">
                       第 {String(i + 1).padStart(3, '0')} 卷 · {dt.time}
