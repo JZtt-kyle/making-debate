@@ -4,13 +4,9 @@ import PhaseStrip from '../components/PhaseStrip.tsx'
 import PhaseFooterNav from '../components/PhaseFooterNav.tsx'
 import {
   PhaseTwoView, PhaseThreeView, PhaseFourView, PhaseFiveView, PhaseSixView,
-} from '../components/PhaseViews.tsx'
+} from '../components/phases/index.ts'
 import { useDebateSocket, ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
-
-// Authorship→anonymous label is fixed at the order MODELS were submitted in
-// Phase 2; the orchestrator uses this exact order too. See server's
-// anonymizeProposals + adapters/index.ts.
-const MODELS: ModelName[] = ['claude', 'chatgpt', 'deepseek']
+import { MODELS } from '../lib/models.ts'
 
 interface StoredMessage {
   phase: number

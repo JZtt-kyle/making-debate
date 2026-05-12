@@ -4,9 +4,14 @@ import { MODELS, makeAdapters, DEFAULT_MODEL_CONFIGS } from '../browser/adapters
 import type { ModelName, ModelConfigs } from '../browser/adapters/index.js'
 import {
   PHASE2_PROMPT, PHASE3_PROMPT, PHASE4_PROMPT, PHASE5_PROMPT, PHASE6_PROMPT,
-  anonymizeProposals, parseRanking, aggregateRankings, parsePhase5Output, parseVerdict,
 } from './prompts.js'
-import type { AnonLabel } from './prompts.js'
+import {
+  anonymizeProposals, aggregateRankings,
+} from './anon.js'
+import type { AnonLabel } from './anon.js'
+import {
+  parseRanking, parsePhase5Output, parseVerdict,
+} from './parsers.js'
 import { debates, messages, summaries } from '../storage/repository.js'
 import type { DebatePhase, DebateStatus } from '../storage/repository.js'
 

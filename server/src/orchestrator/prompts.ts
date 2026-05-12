@@ -1,26 +1,10 @@
+// Prompt templates for the 5-working-phase debate flow. Pure string builders;
+// no parsing logic lives here (see parsers.ts) and no anon helpers either
+// (see anon.ts). Output schemas are documented inline at each prompt.
+
 import type { ModelName } from '../browser/adapters/index.js'
+import type { AnonLabel, AnonProposal, AggregatedRanking } from './anon.js'
 export type { ModelName }
-
-// Anonymization labels for Phase 3 (Karpathy-style — prevents stylistic bias / sycophancy)
-// Fixed order = the same proposal always maps to the same label across all evaluators.
-export const ANON_LABELS = ['甲', '乙', '丙'] as const
-export type AnonLabel = typeof ANON_LABELS[number]
-
-export interface AnonProposal {
-  label: AnonLabel
-  content: string
-  originalName: ModelName
-}
-
-export function anonymizeProposals(
-  proposals: { name: ModelName; content: string }[]
-): AnonProposal[] {
-  return proposals.map((p, i) => ({
-    label: ANON_LABELS[i],
-    content: p.content,
-    originalName: p.name,
-  }))
-}
 
 // ---------------------------------------------------------------------------
 // Phase 2 — 各自方案 (initial proposal)
@@ -62,6 +46,14 @@ ${principles ? `【设计原则 / 约束条件】\n${principles}\n` : ''}
 // Run in a FRESH conversation per model so the evaluator does not have its
 // own Phase 2 proposal in context — this is what makes the anonymity real.
 // Tight 3-bullet critique structure (≤80 chars each) forces specificity.
+// Output schema (used by parsers.ts):
+//   ### 对方案甲 (or ####)
+//   - **决定性缺陷**：...
+//   - **可救的洞见**：...
+//   - **具体改动**：...
+//   (repeat for 乙, 丙)
+//   FINAL RANKING:
+//   1. 方案X / 2. 方案Y / 3. 方案Z
 // ---------------------------------------------------------------------------
 export const PHASE3_PROMPT = (anonymized: AnonProposal[]): string => {
   const proposalsText = anonymized
@@ -105,56 +97,6 @@ FINAL RANKING:
 `.trim()
 }
 
-// Parse "FINAL RANKING:" section. Returns ordered labels (best→worst) or null if not found.
-// Turndown escapes "1." → "1\." when it appears inside a paragraph (to prevent
-// re-rendering as an ordered list); we strip those escapes before matching.
-export function parseRanking(text: string): AnonLabel[] | null {
-  const idx = text.indexOf('FINAL RANKING')
-  if (idx < 0) return null
-  const tail = text.slice(idx).replace(/\\\./g, '.')
-  const matches = Array.from(tail.matchAll(/\d+\.\s*方案\s*([甲乙丙])/g))
-  if (matches.length === 0) return null
-  const labels = matches.map(m => m[1] as AnonLabel)
-  const seen = new Set<AnonLabel>()
-  return labels.filter(l => {
-    if (seen.has(l)) return false
-    seen.add(l)
-    return true
-  })
-}
-
-export interface AggregatedRanking {
-  label: AnonLabel
-  originalName: ModelName
-  avgRank: number  // 1.0 = always #1; lower is better
-  voteCount: number
-}
-
-export function aggregateRankings(
-  anonymized: AnonProposal[],
-  rankings: (AnonLabel[] | null)[]
-): AggregatedRanking[] {
-  const totals: Record<AnonLabel, { sum: number; count: number }> = {
-    甲: { sum: 0, count: 0 },
-    乙: { sum: 0, count: 0 },
-    丙: { sum: 0, count: 0 },
-  }
-  for (const r of rankings) {
-    if (!r) continue
-    r.forEach((label, i) => {
-      totals[label].sum += i + 1
-      totals[label].count += 1
-    })
-  }
-  return anonymized
-    .map(p => ({
-      label: p.label,
-      originalName: p.originalName,
-      avgRank: totals[p.label].count > 0 ? totals[p.label].sum / totals[p.label].count : 99,
-      voteCount: totals[p.label].count,
-    }))
-    .sort((a, b) => a.avgRank - b.avgRank)
-}
 
 // ---------------------------------------------------------------------------
 // Phase 4 — 作者修订 (NEW: this is where "iteration" actually happens)
@@ -218,12 +160,11 @@ ${rankLine}
 
 // ---------------------------------------------------------------------------
 // Phase 5 — 综合 + 裁决 + 少数派意见 (synthesizer only, on REVISED proposals)
-// The synthesizer sees the three REVISED proposals (post-critique), the
-// surviving disagreements, the ranking, and produces four sections:
-//  一、异同对照表
-//  二、关键分歧裁决
-//  三、迭代后的综合方案 + 对原始约束的自检
-//  四、少数派意见
+// Output schema (used by parsers.ts):
+//   ## 一、观点异同对照     (markdown pipe table)
+//   ## 二、关键分歧裁决     (2-4 disputes, each with 分类/裁决/理由)
+//   ## 三、迭代后的综合方案 (with end-of-section principle self-check)
+//   ## 四、少数派意见       (1-3 unincorporated minority views)
 // ---------------------------------------------------------------------------
 export const PHASE5_PROMPT = (
   synthesizerName: ModelName,
@@ -309,46 +250,14 @@ ${critiques}${rankingSection}
 `.trim()
 }
 
-// Parse the Phase 5 synthesizer output into four sections.
-// Lives next to the prompt so format changes only touch one file.
-export function parsePhase5Output(text: string): {
-  comparison: string
-  finalProposal: string
-  dissent: string
-} {
-  // Each match captures content up to the next section header.
-  const sec = (head: string, nextHead: string) => {
-    const re = new RegExp(`(?:##\\s*)?${head}([\\s\\S]*?)(?:##\\s*)?${nextHead}`, 'i')
-    return text.match(re)?.[1]?.trim() ?? ''
-  }
-  const last = (head: string) => {
-    const re = new RegExp(`(?:##\\s*)?${head}([\\s\\S]*?)$`, 'i')
-    return text.match(re)?.[1]?.trim() ?? ''
-  }
-
-  const comparison = sec('一[、,，]\\s*观点异同对照', '二[、,，]')
-  // 关键分歧裁决 — merged INTO comparison so the legacy two-tab UI still works.
-  const arbitration = sec('二[、,，]\\s*关键分歧裁决', '三[、,，]')
-  const finalProposal = sec('三[、,，]\\s*迭代后的综合方案', '四[、,，]')
-  const dissent = last('四[、,，]\\s*少数派意见')
-
-  const comparisonCombined = arbitration
-    ? `${comparison}\n\n## 关键分歧裁决\n\n${arbitration}`
-    : comparison
-
-  return {
-    comparison: comparisonCombined || text,
-    finalProposal,
-    dissent,
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // Phase 6 — 终稿复核 (ratify / veto, parallel by non-synthesizers)
 // A lightweight check: each non-synthesizer reads the final proposal + dissent
-// and either RATIFIES or VETOES with a specific clause. Keeps the synthesizer
-// honest. Cheap: ≤200 words.
+// and either RATIFIES or VETOES with a specific clause. Cheap: ≤200 words.
+// Output schema (used by parsers.ts):
+//   <body up to 200 chars>
+//   VERDICT: RATIFY  -or-  VERDICT: VETO — <reason>
 // ---------------------------------------------------------------------------
 export const PHASE6_PROMPT = (
   modelName: ModelName,
@@ -387,21 +296,4 @@ VERDICT: VETO — <一句话说明被否决的具体条款>
 
 用中文回答。
 `.trim()
-}
-
-export type Verdict = 'RATIFY' | 'VETO' | 'UNKNOWN'
-
-export interface VerdictResult {
-  verdict: Verdict
-  reason: string
-}
-
-export function parseVerdict(text: string): VerdictResult {
-  const cleaned = text.replace(/\\\./g, '.')
-  const m = cleaned.match(/VERDICT:\s*(RATIFY|VETO)\s*(?:[—\-:]\s*(.+))?/i)
-  if (!m) return { verdict: 'UNKNOWN', reason: '' }
-  return {
-    verdict: m[1].toUpperCase() as Verdict,
-    reason: (m[2] ?? '').trim(),
-  }
 }

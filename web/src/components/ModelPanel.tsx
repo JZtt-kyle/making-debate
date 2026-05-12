@@ -2,12 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ModelName, ModelStream } from '../hooks/useDebateSocket.ts'
-
-const MODEL_TONE: Record<ModelName, { rule: string; display: string; latin: string }> = {
-  claude:   { rule: 'var(--ochre)', display: 'Claude',   latin: 'Anthropic' },
-  chatgpt:  { rule: 'var(--sage)',  display: 'ChatGPT',  latin: 'OpenAI'    },
-  deepseek: { rule: 'var(--azure)', display: 'DeepSeek', latin: 'Hangzhou'  },
-}
+import { MODEL_META } from '../lib/models.ts'
 
 // Collapsed cap for completed columns. Picked so a typical 4-section Phase 2
 // proposal (≈1800 chars) shows ~half — enough to read structure, comparable
@@ -29,7 +24,7 @@ interface Props {
 // columns of unequal length no longer leave the short ones swimming in
 // whitespace. Auto-scrolls the tail during live writing.
 export default function ModelPanel({ model, stream, isActivePhase, abstain, badge }: Props) {
-  const tone = MODEL_TONE[model]
+  const meta = MODEL_META[model]
   const bottomRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [userExpanded, setUserExpanded] = useState(false)
@@ -60,7 +55,7 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      borderLeft: `1px solid ${isWriting ? tone.rule : 'var(--rule)'}`,
+      borderLeft: `1px solid ${isWriting ? meta.tone : 'var(--rule)'}`,
       paddingLeft: '1.1rem',
       paddingRight: '0.6rem',
       transition: 'border-color 0.4s',
@@ -79,11 +74,11 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
           fontStyle: 'italic',
           fontWeight: 500,
           fontSize: 18,
-          color: tone.rule,
+          color: meta.tone,
           letterSpacing: '-0.01em',
           lineHeight: 1,
         }}>
-          {tone.display}
+          {meta.display}
         </h4>
         <span style={{
           fontFamily: 'var(--mono)',
@@ -92,7 +87,7 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
           textTransform: 'uppercase',
           color: 'var(--paper-faint)',
         }}>
-          {tone.latin}
+          {meta.latin}
         </span>
         {isWriting && (
           <span style={{
@@ -104,9 +99,9 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
             fontSize: 10,
             letterSpacing: '0.16em',
             textTransform: 'uppercase',
-            color: tone.rule,
+            color: meta.tone,
           }}>
-            <span className="writing-pulse" style={{ background: tone.rule }} />
+            <span className="writing-pulse" style={{ background: meta.tone }} />
             落笔中
           </span>
         )}
@@ -160,7 +155,7 @@ export default function ModelPanel({ model, stream, isActivePhase, abstain, badg
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {stream.content}
               </ReactMarkdown>
-              {isWriting && <span className="caret" style={{ background: tone.rule }} />}
+              {isWriting && <span className="caret" style={{ background: meta.tone }} />}
             </>
           )}
           <div ref={bottomRef} />

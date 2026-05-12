@@ -1,17 +1,5 @@
 import { DebatePhase } from '../hooks/useDebateSocket.ts'
-
-const PHASE_LABELS: Record<DebatePhase, string> = {
-  1: '开题',
-  2: '各自方案',
-  3: '匿名互评',
-  4: '作者修订',
-  5: '综合裁决',
-  6: '终稿复核',
-}
-
-const ROMAN: Record<DebatePhase, string> = {
-  1: '序', 2: 'I', 3: 'II', 4: 'III', 5: 'IV', 6: 'V',
-}
+import { getPhaseMeta, PHASE_MIN, PHASE_MAX } from '../lib/phases.ts'
 
 interface Props {
   viewPhase: DebatePhase
@@ -28,8 +16,10 @@ export default function PhaseFooterNav({
 }: Props) {
   const prevPhase = (viewPhase - 1) as DebatePhase
   const nextPhase = (viewPhase + 1) as DebatePhase
-  const hasPrev = prevPhase >= 2
-  const hasNext = nextPhase <= 6
+  const hasPrev = prevPhase >= PHASE_MIN
+  const hasNext = nextPhase <= PHASE_MAX
+  const prevMeta = getPhaseMeta(prevPhase)
+  const nextMeta = getPhaseMeta(nextPhase)
 
   return (
     <nav style={{
@@ -73,9 +63,9 @@ export default function PhaseFooterNav({
               color: 'var(--paper-faint)',
               marginRight: '0.4rem',
             }}>
-              {ROMAN[prevPhase]}
+              {prevMeta.roman}
             </span>
-            {PHASE_LABELS[prevPhase]}
+            {prevMeta.label}
           </>
         ) : ''}
       </button>
@@ -109,13 +99,13 @@ export default function PhaseFooterNav({
       >
         {hasNext ? (
           <>
-            {PHASE_LABELS[nextPhase]}
+            {nextMeta.label}
             <span style={{
               fontStyle: 'italic',
               color: 'var(--paper-faint)',
               marginLeft: '0.4rem',
             }}>
-              {ROMAN[nextPhase]}
+              {nextMeta.roman}
             </span>
             <span style={{
               fontFamily: 'var(--mono)',

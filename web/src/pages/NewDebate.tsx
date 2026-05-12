@@ -1,18 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { MODEL_META } from '../lib/models.ts'
+import type { ModelName } from '../hooks/useDebateSocket.ts'
 
-type ModelName = 'claude' | 'chatgpt' | 'deepseek'
 type LoginStatus = Record<ModelName, boolean>
 type ClaudeModel = 'sonnet-4-6' | 'opus-4-7'
 type DeepSeekMode = 'fast' | 'expert'
-
-const MODEL_DISPLAY: Record<ModelName, string> = {
-  claude: 'Claude', chatgpt: 'ChatGPT', deepseek: 'DeepSeek',
-}
-
-const MODEL_TONE: Record<ModelName, string> = {
-  claude: 'var(--ochre)', chatgpt: 'var(--sage)', deepseek: 'var(--azure)',
-}
 
 export default function NewDebate() {
   const [topic, setTopic] = useState('')
@@ -144,9 +137,9 @@ export default function NewDebate() {
               }}>
                 <span style={{
                   width: 6, height: 6, borderRadius: '50%',
-                  background: loginStatus[m] ? MODEL_TONE[m] : 'var(--paper-faint)',
+                  background: loginStatus[m] ? MODEL_META[m].tone : 'var(--paper-faint)',
                 }} />
-                {MODEL_DISPLAY[m]}
+                {MODEL_META[m].display}
               </span>
             ))}
           </div>
@@ -203,8 +196,8 @@ export default function NewDebate() {
           <label>第 三 项 · 综合者</label>
           <div style={{ display: 'flex', gap: '0.6rem' }}>
             {(['claude', 'chatgpt', 'deepseek'] as ModelName[]).map(m => (
-              <Pill key={m} active={synthesizer === m} onClick={() => setSynthesizer(m)} tone={MODEL_TONE[m]}>
-                {MODEL_DISPLAY[m]}
+              <Pill key={m} active={synthesizer === m} onClick={() => setSynthesizer(m)} tone={MODEL_META[m].tone}>
+                {MODEL_META[m].display}
               </Pill>
             ))}
           </div>

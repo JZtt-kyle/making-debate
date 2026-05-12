@@ -1,12 +1,5 @@
 import { DebatePhase } from '../hooks/useDebateSocket.ts'
-
-const PHASES: { id: DebatePhase; roman: string; label: string }[] = [
-  { id: 2, roman: 'I',   label: '各自方案' },
-  { id: 3, roman: 'II',  label: '匿名互评' },
-  { id: 4, roman: 'III', label: '作者修订' },
-  { id: 5, roman: 'IV',  label: '综合裁决' },
-  { id: 6, roman: 'V',   label: '终稿复核' },
-]
+import { WORKING_PHASES, getPhaseMeta } from '../lib/phases.ts'
 
 interface Props {
   viewPhase: DebatePhase
@@ -29,12 +22,13 @@ export default function PhaseStrip({
       padding: '0.4rem 0',
       marginBottom: '0.4rem',
     }}>
-      {PHASES.map((p, i) => {
-        const isViewing = p.id === viewPhase
-        const isCompleted = (p.id < debateCurrentPhase || done) && !(aborted && p.id >= debateCurrentPhase)
-        const isRunning = !done && !aborted && p.id === debateCurrentPhase
+      {WORKING_PHASES.map((id, i) => {
+        const meta = getPhaseMeta(id)
+        const isViewing = id === viewPhase
+        const isCompleted = (id < debateCurrentPhase || done) && !(aborted && id >= debateCurrentPhase)
+        const isRunning = !done && !aborted && id === debateCurrentPhase
         const isPending = !isCompleted && !isRunning
-        const isAbortedHere = aborted && p.id === debateCurrentPhase
+        const isAbortedHere = aborted && id === debateCurrentPhase
 
         // Color logic: viewing state always trumps progress state.
         const labelColor = isViewing ? 'var(--paper)'
@@ -47,8 +41,8 @@ export default function PhaseStrip({
 
         return (
           <button
-            key={p.id}
-            onClick={() => onSelect(p.id)}
+            key={id}
+            onClick={() => onSelect(id)}
             style={{
               flex: 1,
               background: 'transparent',
@@ -82,7 +76,7 @@ export default function PhaseStrip({
                 lineHeight: 1,
                 fontFeatureSettings: '"onum" 1',
               }}>
-                {p.roman}
+                {meta.roman}
               </span>
               <span style={{
                 fontFamily: 'var(--serif-display)',
@@ -92,7 +86,7 @@ export default function PhaseStrip({
                 lineHeight: 1.2,
                 letterSpacing: 0,
               }}>
-                {p.label}
+                {meta.label}
               </span>
               {isRunning && (
                 <span className="writing-pulse" style={{
