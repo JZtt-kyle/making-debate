@@ -68,7 +68,13 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
   })
 
   // GET /api/debates/:id/export — Markdown export
-  router.get('/debates/:id/export', (req, res) => {
+  // The :filename segment is decorative — the URL's basename is what the
+  // browser uses to name the downloaded file when neither the download
+  // attribute nor Content-Disposition is honored (browser extensions,
+  // synthetic-click edge cases). Pin it to end in .md so the file always
+  // has the right extension. Both /:id/export and /:id/export/:filename
+  // are accepted so legacy callers still work.
+  router.get(['/debates/:id/export', '/debates/:id/export/:filename'], (req, res) => {
     const debate = debates.get(req.params.id)
     if (!debate) return res.status(404).json({ error: 'not found' })
     const msgs = messages.listByDebate(req.params.id)
