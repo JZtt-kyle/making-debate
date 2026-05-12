@@ -195,7 +195,6 @@ export default function DebateView() {
 
   return (
     <div style={{
-      maxWidth: 1640,
       margin: '0 auto',
       padding: '2rem 2.4rem 4rem',
     }}>
