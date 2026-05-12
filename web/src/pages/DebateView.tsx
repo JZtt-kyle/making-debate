@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import PhaseIndicator from '../components/PhaseIndicator.tsx'
-import PhaseSection, { PHASE_DISPLAY } from '../components/PhaseSection.tsx'
+import PhaseStrip from '../components/PhaseStrip.tsx'
+import PhaseFooterNav from '../components/PhaseFooterNav.tsx'
+import {
+  PhaseTwoView, PhaseThreeView, PhaseFourView, PhaseFiveView, PhaseSixView,
+} from '../components/PhaseViews.tsx'
 import { useDebateSocket, ModelName, ModelStream, DebatePhase } from '../hooks/useDebateSocket.ts'
 
+// Authorship→anonymous label is fixed at the order MODELS were submitted in
+// Phase 2; the orchestrator uses this exact order too. See server's
+// anonymizeProposals + adapters/index.ts.
 const MODELS: ModelName[] = ['claude', 'chatgpt', 'deepseek']
-// DB phases that hold model output: II-VI (2-6).
-const CONTENT_PHASES: DebatePhase[] = [2, 3, 4, 5, 6]
-const PHASE_SYNTH = 5  // 综合者独立成稿的阶段
-const PHASE_REVIEW = 6 // 终稿复核（综合者不参与）
 
 interface StoredMessage {
   phase: number
@@ -33,9 +33,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 type ByPhase = Record<DebatePhase, Partial<Record<ModelName, ModelStream | null>>>
 
-function transposeByPhase(
-  streams: Record<ModelName, ModelStream[]>
-): ByPhase {
+function transposeByPhase(streams: Record<ModelName, ModelStream[]>): ByPhase {
   const out: ByPhase = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} }
   for (const model of MODELS) {
     for (const s of streams[model] ?? []) {
@@ -52,7 +50,9 @@ export default function DebateView() {
   const [staticStreams, setStaticStreams] = useState<Record<ModelName, ModelStream[]>>({
     claude: [], chatgpt: [], deepseek: [],
   })
-  const [staticSummary, setStaticSummary] = useState<{ comparison: string; finalProposal: string; dissent?: string } | null>(null)
+  const [staticSummary, setStaticSummary] = useState<
+    { comparison: string; finalProposal: string; dissent?: string } | null
+  >(null)
 
   const liveState = useDebateSocket(id, liveMode)
 
@@ -68,7 +68,9 @@ export default function DebateView() {
         const streams: Record<ModelName, ModelStream[]> = { claude: [], chatgpt: [], deepseek: [] }
         for (const msg of data.messages) {
           if (!streams[msg.model]) streams[msg.model] = []
-          streams[msg.model].push({ phase: msg.phase as DebatePhase, content: msg.content, complete: true })
+          streams[msg.model].push({
+            phase: msg.phase as DebatePhase, content: msg.content, complete: true,
+          })
         }
         setStaticStreams(streams)
         if (data.summary) {
@@ -82,6 +84,7 @@ export default function DebateView() {
       .catch(console.error)
   }, [id])
 
+  // Merge static (already-stored) + live (streaming) message streams.
   const streams: Record<ModelName, ModelStream[]> = liveMode
     ? Object.fromEntries(MODELS.map(m => {
         const stat = staticStreams[m] ?? []
@@ -99,15 +102,40 @@ export default function DebateView() {
 
   const byPhase = useMemo(() => transposeByPhase(streams), [streams])
 
-  // Highest stored phase = highest db phase that has any model output
+  // Where the debate ITSELF is at (vs. what the user is viewing).
   const highestStoredPhase = (Object.values(staticStreams).flat()
     .reduce<number>((m, s) => Math.max(m, s.phase), 2)) as DebatePhase
   const aborted = !liveMode && debate?.status === 'error'
-  // For aborted: the "current" (i.e., not-yet-completed) phase is highestStored + 1
-  const currentPhase: DebatePhase = liveMode ? liveState.phase
+  const debateCurrentPhase: DebatePhase = liveMode ? liveState.phase
                     : aborted   ? (Math.min(highestStoredPhase + 1, 6) as DebatePhase)
                                 : 6
   const done = liveMode ? liveState.done : debate?.status === 'done'
+
+  // ---- viewPhase state machine ----
+  // Tracks which phase the user is currently looking at.
+  // Auto-advance with the debate UNLESS the user has scrolled back manually.
+  const [viewPhase, setViewPhase] = useState<DebatePhase>(2)
+  const userPinnedRef = useRef(false)
+
+  // Initialize viewPhase once we know where the debate is at.
+  const initialized = useRef(false)
+  useEffect(() => {
+    if (!debate || initialized.current) return
+    initialized.current = true
+    setViewPhase(debateCurrentPhase)
+  }, [debate, debateCurrentPhase])
+
+  // Auto-track live phase progression when user hasn't pinned.
+  useEffect(() => {
+    if (!liveMode || userPinnedRef.current) return
+    if (debateCurrentPhase !== viewPhase) setViewPhase(debateCurrentPhase)
+  }, [debateCurrentPhase, liveMode, viewPhase])
+
+  const handleSelectPhase = (p: DebatePhase) => {
+    userPinnedRef.current = true
+    setViewPhase(p)
+  }
+
   const summary = liveMode ? (liveState.summary ?? staticSummary) : staticSummary
   const wsError = liveMode ? liveState.error : null
   const dbError = debate?.status === 'error' ? '辩论异常终止 · 服务器进程中断' : null
@@ -115,7 +143,8 @@ export default function DebateView() {
 
   const status = debate?.status ?? 'pending'
   const date = debate?.created_at
-    ? new Date(debate.created_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+    ? new Date(debate.created_at).toLocaleDateString('zh-CN',
+        { year: 'numeric', month: 'long', day: 'numeric' })
     : ''
   const synthesizer = debate?.synthesizer as ModelName | undefined
 
@@ -123,324 +152,165 @@ export default function DebateView() {
     if (id) window.open(`/api/debates/${id}/export`, '_blank')
   }
 
-  // Render rules:
-  // - Phase 2/3/4: always render (skeleton even if empty, to show structure)
-  // - Phase 5 (synthesis): once we've reached it OR summary exists
-  // - Phase 6 (review): once we've reached it OR any reviewer has output
-  const synthHasContent = synthesizer ? !!byPhase[PHASE_SYNTH][synthesizer]?.content : false
-  const showSynth = synthHasContent || currentPhase >= PHASE_SYNTH || done || !!summary
-  const reviewHasContent = MODELS.some(m => !!byPhase[PHASE_REVIEW][m]?.content)
-  const showReview = reviewHasContent || currentPhase >= PHASE_REVIEW || done
-  const phaseSectionsToShow: DebatePhase[] = CONTENT_PHASES.filter(p =>
-    (p !== PHASE_SYNTH || showSynth) && (p !== PHASE_REVIEW || showReview)
-  )
-
-  // Sticky in-page nav: jump to a phase's section
-  const scrollToPhase = (p: DebatePhase) => {
-    document.getElementById(`phase-${p}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  // Is THE PHASE BEING VIEWED currently active in the debate?
+  const isViewPhaseActive = liveMode && viewPhase === debateCurrentPhase && !done
+  const isViewPhaseAborted = aborted && viewPhase === debateCurrentPhase
 
   return (
     <div style={{
-      maxWidth: 1480,
+      maxWidth: 1280,
       margin: '0 auto',
       padding: '2rem 2.4rem 4rem',
-      display: 'grid',
-      gridTemplateColumns: '160px 1fr',
-      gap: '2.2rem',
     }}>
-      {/* Sticky left rail: phase navigator */}
-      <aside style={{
-        position: 'sticky',
-        top: '2rem',
-        alignSelf: 'start',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1rem',
-        paddingTop: '0.4rem',
-      }}>
-        <Link to="/" className="byline" style={{
-          borderBottom: 'none',
-          color: 'var(--paper-mute)',
+      {/* Editorial masthead */}
+      <header className="fade-up" style={{ marginBottom: '1.6rem' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginBottom: '0.7rem',
         }}>
-          ← 回到广场
-        </Link>
-
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.6rem' }}>
-          {CONTENT_PHASES.map(p => {
-            const d = PHASE_DISPLAY[p]
-            const isCurrent = p === currentPhase && !done
-            const isDone = p < currentPhase || done
-            const tone = isCurrent ? 'var(--vermilion)' : isDone ? 'var(--paper)' : 'var(--paper-faint)'
-            return (
-              <button
-                key={p}
-                onClick={() => scrollToPhase(p)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  padding: '0.35rem 0',
-                  display: 'flex',
-                  alignItems: 'baseline',
-                  gap: '0.55rem',
-                  cursor: 'pointer',
-                  color: tone,
-                  borderLeft: `2px solid ${isCurrent ? 'var(--vermilion)' : 'transparent'}`,
-                  paddingLeft: '0.55rem',
-                  borderRadius: 0,
-                  fontFamily: 'var(--serif-display)',
-                  letterSpacing: 0,
-                  textTransform: 'none',
-                  textAlign: 'left',
-                }}
-              >
-                <span style={{
-                  fontStyle: 'italic',
-                  fontSize: 16,
-                  fontFeatureSettings: '"onum" 1',
-                  color: tone,
-                }}>
-                  {d.roman}
-                </span>
-                <span style={{
-                  fontSize: 13,
-                  color: tone,
-                }}>
-                  {d.label}
-                </span>
-              </button>
-            )
-          })}
-        </nav>
-
-        {(done || summary) && (
-          <button
-            onClick={exportMd}
-            className="ghost"
-            style={{ marginTop: '1.6rem' }}
-          >
-            导出 MD
-          </button>
-        )}
-      </aside>
-
-      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        {/* Editorial masthead */}
-        <header className="fade-up">
-          <div style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            marginBottom: '0.7rem',
-          }}>
-            <span className="byline" style={{
-              color: 'var(--paper-mute)',
-            }}>
-              三方论辩 · 第 {debate?.id?.slice(0, 6) ?? '------'} 期
-            </span>
-            <span className="byline" style={{
-              color: status === 'running' ? 'var(--vermilion)' :
-                     status === 'done'    ? 'var(--paper)' :
-                     status === 'error'   ? 'var(--vermilion)' :
-                                            'var(--paper-faint)',
-            }}>
-              {status === 'running' && <span className="writing-pulse" style={{
-                background: 'var(--vermilion)', marginRight: 8,
-              }} />}
-              {STATUS_LABEL[status] ?? status}
-            </span>
-          </div>
-
-          <h1 className="display fade-up" style={{
-            fontSize: 'clamp(28px, 3.4vw, 44px)',
-            fontWeight: 500,
-            color: 'var(--paper)',
-            marginBottom: '0.6rem',
-            lineHeight: 1.1,
-            maxWidth: '85%',
-          }}>
-            {debate?.topic ?? '加载中…'}
-          </h1>
-
-          <div className="byline" style={{
+          <Link to="/" className="byline" style={{
+            borderBottom: 'none',
             color: 'var(--paper-mute)',
-            marginBottom: '1.2rem',
-            display: 'flex',
-            gap: '1.6rem',
-            flexWrap: 'wrap',
           }}>
-            <span>{date}</span>
-            {synthesizer && (
-              <span>综合者 · <em style={{
-                fontStyle: 'italic',
-                color: 'var(--paper)',
-                fontFamily: 'var(--serif-display)',
-                textTransform: 'none',
-                letterSpacing: 0,
-                fontSize: 14,
-              }}>{synthesizer}</em></span>
-            )}
-          </div>
-
-          {debate?.principles && (
-            <p style={{
-              fontFamily: 'var(--serif-body)',
-              fontStyle: 'italic',
-              fontSize: 15,
-              color: 'var(--paper-mute)',
-              borderLeft: '2px solid var(--rule)',
-              paddingLeft: '0.9rem',
-              marginBottom: '1.2rem',
-              maxWidth: '85%',
-            }}>
-              {debate.principles}
-            </p>
-          )}
-
-          {error && (
-            <div style={{
-              color: 'var(--vermilion)',
-              fontSize: 13,
-              fontStyle: 'italic',
-              fontFamily: 'var(--serif-body)',
-              marginBottom: '0.9rem',
-              paddingLeft: '0.7rem',
-              borderLeft: '2px solid var(--vermilion)',
-            }}>
-              {error}
-            </div>
-          )}
-
-          <PhaseIndicator current={currentPhase} done={done} aborted={aborted} />
-        </header>
-
-        {/* Phase sections — each is a "幕" with its own three-column matrix */}
-        <main style={{ marginTop: '1.8rem', display: 'flex', flexDirection: 'column' }}>
-          {phaseSectionsToShow.map(p => {
-            const isActive = liveMode && p === currentPhase && !done
-            const isAbortedHere = aborted && p === currentPhase
-            // Phase V = single-column (synthesizer only) + inline summary
-            if (p === PHASE_SYNTH) {
-              return (
-                <PhaseSection
-                  key={p}
-                  phase={PHASE_SYNTH}
-                  panels={byPhase[PHASE_SYNTH]}
-                  isActivePhase={isActive}
-                  isAborted={isAbortedHere}
-                  singleColumn={synthesizer}
-                >
-                  {summary && (
-                    <SummarySection
-                      comparison={summary.comparison}
-                      finalProposal={summary.finalProposal}
-                      dissent={summary.dissent ?? ''}
-                    />
-                  )}
-                </PhaseSection>
-              )
-            }
-            // Phase VI = three-column ratification but synthesizer abstains
-            if (p === PHASE_REVIEW) {
-              return (
-                <PhaseSection
-                  key={p}
-                  phase={PHASE_REVIEW}
-                  panels={byPhase[PHASE_REVIEW]}
-                  isActivePhase={isActive}
-                  isAborted={isAbortedHere}
-                  abstainModel={synthesizer}
-                />
-              )
-            }
-            return (
-              <PhaseSection
-                key={p}
-                phase={p}
-                panels={byPhase[p]}
-                isActivePhase={isActive}
-                isAborted={isAbortedHere}
-              />
-            )
-          })}
-        </main>
-      </div>
-    </div>
-  )
-}
-
-// Inline summary rendered inside the Phase V section.
-// Three tabs: 异同+裁决 / 综合方案 / 少数派意见.
-function SummarySection({ comparison, finalProposal, dissent }:
-  { comparison: string; finalProposal: string; dissent: string }) {
-  const [tab, setTab] = useState<'comparison' | 'proposal' | 'dissent'>('comparison')
-  const content = tab === 'comparison' ? comparison
-                : tab === 'proposal'   ? finalProposal
-                                       : dissent
-
-  const TABS = [
-    { id: 'comparison' as const, label: '异同 + 裁决' },
-    { id: 'proposal'   as const, label: '综合方案' },
-    ...(dissent ? [{ id: 'dissent' as const, label: '少数派意见' }] : []),
-  ]
-
-  return (
-    <section style={{
-      marginTop: '1.4rem',
-      paddingTop: '1.2rem',
-      borderTop: '1px dashed var(--rule)',
-    }}>
-      <header style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        gap: '1.4rem',
-        flexWrap: 'wrap',
-        marginBottom: '1rem',
-      }}>
-        <div className="byline" style={{ color: 'var(--paper-mute)' }}>
-          编后记 · 终稿
+            ← 回到广场
+          </Link>
+          <span className="byline" style={{
+            color: status === 'running' ? 'var(--vermilion)' :
+                   status === 'done'    ? 'var(--paper)' :
+                   status === 'error'   ? 'var(--vermilion)' :
+                                          'var(--paper-faint)',
+          }}>
+            {status === 'running' && <span className="writing-pulse" style={{
+              background: 'var(--vermilion)', marginRight: 8,
+            }} />}
+            {STATUS_LABEL[status] ?? status}
+            <span style={{ marginLeft: '0.7rem', color: 'var(--paper-mute)' }}>
+              第 {debate?.id?.slice(0, 6) ?? '------'} 期
+            </span>
+          </span>
         </div>
 
-        <nav style={{
-          display: 'flex',
-          gap: '1.4rem',
-          marginLeft: 'auto',
-          alignItems: 'center',
+        <h1 className="display fade-up" style={{
+          fontSize: 'clamp(28px, 3.4vw, 44px)',
+          fontWeight: 500,
+          color: 'var(--paper)',
+          marginBottom: '0.6rem',
+          lineHeight: 1.12,
+          maxWidth: '92%',
         }}>
-          {TABS.map(t => {
-            const active = tab === t.id
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  padding: '0.3rem 0',
-                  borderBottom: `1.5px solid ${active ? 'var(--vermilion)' : 'transparent'}`,
-                  borderRadius: 0,
-                  display: 'flex',
-                  alignItems: 'baseline',
-                  gap: '0.5rem',
-                  cursor: 'pointer',
-                  color: active ? 'var(--paper)' : 'var(--paper-mute)',
-                  fontFamily: 'var(--serif-display)',
-                  fontWeight: active ? 600 : 500,
-                  fontSize: 14,
-                  letterSpacing: 0,
-                  textTransform: 'none',
-                }}
-              >
-                {t.label}
-              </button>
-            )
-          })}
-        </nav>
+          {debate?.topic ?? '加载中…'}
+        </h1>
+
+        <div className="byline" style={{
+          color: 'var(--paper-mute)',
+          marginBottom: '1.2rem',
+          display: 'flex',
+          gap: '1.6rem',
+          flexWrap: 'wrap',
+        }}>
+          <span>{date}</span>
+          {synthesizer && (
+            <span>综合者 · <em style={{
+              fontStyle: 'italic',
+              color: 'var(--paper)',
+              fontFamily: 'var(--serif-display)',
+              textTransform: 'none',
+              letterSpacing: 0,
+              fontSize: 14,
+            }}>{synthesizer}</em></span>
+          )}
+        </div>
+
+        {debate?.principles && (
+          <p style={{
+            fontFamily: 'var(--serif-body)',
+            fontStyle: 'italic',
+            fontSize: 15,
+            color: 'var(--paper-mute)',
+            borderLeft: '2px solid var(--rule)',
+            paddingLeft: '0.9rem',
+            marginBottom: '1.2rem',
+            maxWidth: '92%',
+          }}>
+            {debate.principles}
+          </p>
+        )}
+
+        {error && (
+          <div style={{
+            color: 'var(--vermilion)',
+            fontSize: 13,
+            fontStyle: 'italic',
+            fontFamily: 'var(--serif-body)',
+            marginBottom: '0.9rem',
+            paddingLeft: '0.7rem',
+            borderLeft: '2px solid var(--vermilion)',
+          }}>
+            {error}
+          </div>
+        )}
       </header>
 
-      <div className="prose fade-up" key={tab}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-      </div>
-    </section>
+      <PhaseStrip
+        viewPhase={viewPhase}
+        debateCurrentPhase={debateCurrentPhase}
+        done={!!done}
+        aborted={aborted}
+        onSelect={handleSelectPhase}
+      />
+
+      {/* One phase visible at a time */}
+      <main style={{ marginTop: '2rem' }} key={viewPhase}>
+        {viewPhase === 2 && (
+          <PhaseTwoView
+            panels={byPhase[2]}
+            isActivePhase={isViewPhaseActive}
+            isAborted={isViewPhaseAborted}
+          />
+        )}
+        {viewPhase === 3 && (
+          <PhaseThreeView
+            panels={byPhase[3]}
+            anonOrder={MODELS}
+            isActivePhase={isViewPhaseActive}
+            isAborted={isViewPhaseAborted}
+          />
+        )}
+        {viewPhase === 4 && (
+          <PhaseFourView
+            panels={byPhase[4]}
+            isActivePhase={isViewPhaseActive}
+            isAborted={isViewPhaseAborted}
+          />
+        )}
+        {viewPhase === 5 && (
+          <PhaseFiveView
+            synthesizer={synthesizer}
+            stream={synthesizer ? byPhase[5][synthesizer] : null}
+            summary={summary}
+            isActivePhase={isViewPhaseActive}
+            isAborted={isViewPhaseAborted}
+          />
+        )}
+        {viewPhase === 6 && (
+          <PhaseSixView
+            panels={byPhase[6]}
+            synthesizer={synthesizer}
+            isActivePhase={isViewPhaseActive}
+            isAborted={isViewPhaseAborted}
+          />
+        )}
+      </main>
+
+      <PhaseFooterNav
+        viewPhase={viewPhase}
+        onPrev={() => handleSelectPhase(Math.max(2, viewPhase - 1) as DebatePhase)}
+        onNext={() => handleSelectPhase(Math.min(6, viewPhase + 1) as DebatePhase)}
+        onExport={exportMd}
+        canExport={!!done || !!summary}
+      />
+    </div>
   )
 }
