@@ -1,10 +1,12 @@
 import { DebatePhase } from '../hooks/useDebateSocket.ts'
 
+// Phase 1 is conceptual ("开题") and produces no model output, so it isn't
+// surfaced. We display only the three content-bearing phases (DB ids 2/3/4)
+// as roman I/II/III.
 const PHASES: { id: DebatePhase; roman: string; label: string }[] = [
-  { id: 1, roman: 'I',   label: '开题' },
-  { id: 2, roman: 'II',  label: '各自方案' },
-  { id: 3, roman: 'III', label: '互相批评' },
-  { id: 4, roman: 'IV',  label: '综合迭代' },
+  { id: 2, roman: 'I',   label: '各自方案' },
+  { id: 3, roman: 'II',  label: '互相批评' },
+  { id: 4, roman: 'III', label: '综合迭代' },
 ]
 
 export default function PhaseIndicator({ current, done, aborted = false }:

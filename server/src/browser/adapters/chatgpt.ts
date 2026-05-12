@@ -1,5 +1,6 @@
 import { Page } from 'playwright'
 import { SiteAdapter, waitFor } from './base.js'
+import { htmlToMarkdown } from '../markdown.js'
 
 // All ChatGPT selectors — update here if UI changes
 const SEL = {
@@ -60,14 +61,16 @@ export class ChatGPTAdapter implements SiteAdapter {
         document.querySelectorAll('[data-message-author-role="assistant"]').length
       )
 
-    const getText = (): Promise<string> =>
+    const getHtml = (): Promise<string> =>
       this.page.evaluate(() => {
         const msgs = document.querySelectorAll('[data-message-author-role="assistant"]')
         const last = msgs[msgs.length - 1]
         if (!last) return ''
         const md = last.querySelector('.markdown, .prose')
-        return ((md ?? last) as HTMLElement).innerText ?? (md ?? last).textContent ?? ''
+        return ((md ?? last) as HTMLElement).outerHTML ?? ''
       })
+
+    const getText = async (): Promise<string> => htmlToMarkdown(await getHtml())
 
     const isStreaming = (): Promise<boolean> =>
       this.page.evaluate(() => !!document.querySelector('[data-stream-active]'))

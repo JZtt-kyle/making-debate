@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { IncomingMessage } from 'http'
 import { Server } from 'http'
-import { WSEvent } from '../orchestrator/debate.js'
+import type { WSEvent } from '../orchestrator/debate.js'
 
 export type WsClients = Map<string, Set<(event: WSEvent) => void>>
 

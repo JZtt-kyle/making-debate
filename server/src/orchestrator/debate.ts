@@ -1,25 +1,17 @@
 import { CDPSession } from '../browser/cdp.js'
-import { ClaudeAdapter } from '../browser/adapters/claude.js'
-import { ChatGPTAdapter } from '../browser/adapters/chatgpt.js'
-import { DeepSeekAdapter } from '../browser/adapters/deepseek.js'
-import { SiteAdapter, DeepSeekConfig, ClaudeConfig, ModelConfig } from '../browser/adapters/base.js'
-import { ModelName, PHASE1_PROMPT, PHASE3_PROMPT, PHASE4_PROMPT, anonymizeProposals, parseRanking, aggregateRankings, AnonLabel } from './prompts.js'
-import { db } from '../storage/db.js'
+import type { SiteAdapter, ModelConfig } from '../browser/adapters/base.js'
+import { MODELS, makeAdapters, DEFAULT_MODEL_CONFIGS } from '../browser/adapters/index.js'
+import type { ModelName, ModelConfigs } from '../browser/adapters/index.js'
+import {
+  PHASE1_PROMPT, PHASE3_PROMPT, PHASE4_PROMPT,
+  anonymizeProposals, parseRanking, aggregateRankings, parsePhase4Output,
+} from './prompts.js'
+import type { AnonLabel } from './prompts.js'
+import { debates, messages, summaries } from '../storage/repository.js'
+import type { DebatePhase, DebateStatus } from '../storage/repository.js'
 
-export type DebatePhase = 1 | 2 | 3 | 4
-export type DebateStatus = 'pending' | 'running' | 'done' | 'error'
-
-export interface ModelConfigs {
-  deepseek: DeepSeekConfig
-  claude: ClaudeConfig
-  chatgpt: Record<string, never>
-}
-
-export const DEFAULT_MODEL_CONFIGS: ModelConfigs = {
-  deepseek: { mode: 'fast', deepThink: false, smartSearch: false },
-  claude: { model: 'sonnet-4-6' },
-  chatgpt: {},
-}
+export { DEFAULT_MODEL_CONFIGS }
+export type { DebatePhase, DebateStatus, ModelConfigs }
 
 export interface WSEvent {
   type: 'phase_started' | 'delta' | 'message_complete' | 'summary' | 'done' | 'error'
@@ -31,16 +23,6 @@ export interface WSEvent {
 }
 
 type EventEmitter = (event: WSEvent) => void
-
-const MODELS: ModelName[] = ['claude', 'chatgpt', 'deepseek']
-
-function makeAdapters(): Record<ModelName, SiteAdapter> {
-  return {
-    claude: new ClaudeAdapter(),
-    chatgpt: new ChatGPTAdapter(),
-    deepseek: new DeepSeekAdapter(),
-  }
-}
 
 async function runModel(
   debateId: string,
@@ -65,17 +47,13 @@ async function runModel(
       emit({ type: 'delta', debateId, phase, model, content: delta })
     })
     emit({ type: 'message_complete', debateId, phase, model, content })
-    db.prepare(
-      'INSERT INTO messages (debate_id, phase, model, content, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(debateId, phase, model, content, Date.now())
+    messages.insert(debateId, phase, model, content)
     return content
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     console.error(`[debate] ${model} phase ${phase} failed:`, error)
     emit({ type: 'error', debateId, phase, model, error })
-    db.prepare(
-      'INSERT INTO messages (debate_id, phase, model, content, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(debateId, phase, model, `[ERROR: ${error}]`, Date.now())
+    messages.insert(debateId, phase, model, `[ERROR: ${error}]`)
     return ''
   }
 }
@@ -89,27 +67,27 @@ export async function runDebate(
   emit: EventEmitter,
   modelConfigs: ModelConfigs = DEFAULT_MODEL_CONFIGS
 ): Promise<void> {
-  db.prepare("UPDATE debates SET status = 'running' WHERE id = ?").run(debateId)
+  debates.setStatus(debateId, 'running')
 
   const adapters = makeAdapters()
 
   // wire each adapter to its page
   for (const model of MODELS) {
-    const page = await cdp.ensurePage(model as 'claude' | 'chatgpt' | 'deepseek')
+    const page = await cdp.ensurePage(model)
     adapters[model].setPage(page)
     await adapters[model].ensureReady()
   }
 
-  // Phase 1+2: open + initial proposals — newConversation + configure called once per model
+  // Phase 2: initial proposals — newConversation + configure called once per model.
+  // (Phase 1 is conceptual "开题"; it has no model output, so we don't emit it.)
   const phase2Results: { name: ModelName; content: string }[] = []
-  const phase1Jobs = MODELS.map(async model => {
+  const phase2Jobs = MODELS.map(async model => {
     const prompt = PHASE1_PROMPT(topic, principles, model)
-    const content = await runModel(debateId, 2, model, adapters[model], prompt, (ev) => {
-      emit({ ...ev, phase: ev.type === 'phase_started' ? 1 : 2 })
-    }, true, modelConfigs[model])
+    const content = await runModel(debateId, 2, model, adapters[model], prompt, emit,
+      true, modelConfigs[model])
     phase2Results.push({ name: model, content })
   })
-  await Promise.all(phase1Jobs)
+  await Promise.all(phase2Jobs)
 
   // Phase 3: anonymized mutual critique + structured FINAL RANKING
   // (continues same session — no configure needed)
@@ -138,18 +116,11 @@ export async function runDebate(
     phase3Results.map(r => ({ name: r.name, content: r.content })), aggregated)
   const summaryContent = await runModel(debateId, 4, synthesizer, synthAdapter, synthPrompt, emit, false)
 
-  // parse out the two sections for the summary table
-  const comparisonMatch = summaryContent.match(/(?:##\s*)?一[、,，]观点异同对照([\s\S]*?)(?:##\s*)?二[、,，]/i)
-  const proposalMatch = summaryContent.match(/(?:##\s*)?二[、,，]迭代后的综合方案([\s\S]*?)$/i)
-  const comparison = comparisonMatch?.[1]?.trim() ?? summaryContent
-  const finalProposal = proposalMatch?.[1]?.trim() ?? ''
-
-  db.prepare(
-    'INSERT OR REPLACE INTO summaries (debate_id, comparison, final_proposal) VALUES (?, ?, ?)'
-  ).run(debateId, comparison, finalProposal)
+  const { comparison, finalProposal } = parsePhase4Output(summaryContent)
+  summaries.upsert(debateId, comparison, finalProposal)
 
   emit({ type: 'summary', debateId, content: JSON.stringify({ comparison, finalProposal }) })
 
-  db.prepare("UPDATE debates SET status = 'done', completed_at = ? WHERE id = ?").run(Date.now(), debateId)
+  debates.markDone(debateId)
   emit({ type: 'done', debateId })
 }

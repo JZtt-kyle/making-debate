@@ -1,10 +1,10 @@
 import express, { Router } from 'express'
 import { v4 as uuid } from 'uuid'
-import { db } from '../storage/db.js'
-import { runDebate, WSEvent, ModelConfigs, DEFAULT_MODEL_CONFIGS } from '../orchestrator/debate.js'
+import { runDebate, DEFAULT_MODEL_CONFIGS } from '../orchestrator/debate.js'
+import type { WSEvent, ModelConfigs } from '../orchestrator/debate.js'
 import { CDPSession } from '../browser/cdp.js'
-import type { ModelName } from '../orchestrator/prompts.js'
-import type { DeepSeekConfig, ClaudeConfig } from '../browser/adapters/base.js'
+import type { ModelName } from '../browser/adapters/index.js'
+import { debates, messages, summaries } from '../storage/repository.js'
 
 type WsClients = Map<string, Set<(event: WSEvent) => void>>
 
@@ -16,7 +16,7 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
   router.post('/debates', async (req, res) => {
     const { topic, principles = '', synthesizer, deepseekConfig, claudeConfig } = req.body as {
       topic?: string; principles?: string; synthesizer?: ModelName
-      deepseekConfig?: DeepSeekConfig; claudeConfig?: ClaudeConfig
+      deepseekConfig?: ModelConfigs['deepseek']; claudeConfig?: ModelConfigs['claude']
     }
     if (!topic || !synthesizer) {
       return res.status(400).json({ error: 'topic and synthesizer are required' })
@@ -29,10 +29,11 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     }
 
     const id = uuid()
-    db.prepare(
-      'INSERT INTO debates (id, topic, principles, synthesizer, status, created_at, deepseek_config, claude_config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, topic, principles, synthesizer, 'pending', Date.now(),
-      JSON.stringify(modelConfigs.deepseek), JSON.stringify(modelConfigs.claude))
+    debates.create({
+      id, topic, principles, synthesizer,
+      deepseekConfigJson: JSON.stringify(modelConfigs.deepseek),
+      claudeConfigJson: JSON.stringify(modelConfigs.claude),
+    })
 
     res.json({ id })
 
@@ -44,37 +45,32 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     runDebate(id, topic, principles, synthesizer, cdp, emit, modelConfigs).catch(err => {
       console.error('[debate] fatal error:', err)
       emit({ type: 'error', debateId: id, error: String(err) })
-      db.prepare("UPDATE debates SET status = 'error' WHERE id = ?").run(id)
+      debates.setStatus(id, 'error')
     })
   })
 
   // GET /api/debates — list all
   router.get('/debates', (_req, res) => {
-    const rows = db.prepare(
-      'SELECT id, topic, synthesizer, status, created_at, completed_at FROM debates ORDER BY created_at DESC'
-    ).all()
-    res.json(rows)
+    res.json(debates.list())
   })
 
   // GET /api/debates/:id — detail
   router.get('/debates/:id', (req, res) => {
-    const debate = db.prepare('SELECT * FROM debates WHERE id = ?').get(req.params.id)
+    const debate = debates.get(req.params.id)
     if (!debate) return res.status(404).json({ error: 'not found' })
-    const messages = db.prepare(
-      'SELECT phase, model, content, created_at FROM messages WHERE debate_id = ? ORDER BY id'
-    ).all(req.params.id)
-    const summary = db.prepare('SELECT * FROM summaries WHERE debate_id = ?').get(req.params.id)
-    res.json({ debate, messages, summary })
+    res.json({
+      debate,
+      messages: messages.listByDebate(req.params.id),
+      summary: summaries.get(req.params.id),
+    })
   })
 
   // GET /api/debates/:id/export — Markdown export
   router.get('/debates/:id/export', (req, res) => {
-    const debate = db.prepare('SELECT * FROM debates WHERE id = ?').get(req.params.id) as any
+    const debate = debates.get(req.params.id)
     if (!debate) return res.status(404).json({ error: 'not found' })
-    const messages = db.prepare(
-      'SELECT phase, model, content FROM messages WHERE debate_id = ? ORDER BY id'
-    ).all(req.params.id) as any[]
-    const summary = db.prepare('SELECT * FROM summaries WHERE debate_id = ?').get(req.params.id) as any
+    const msgs = messages.listByDebate(req.params.id)
+    const summary = summaries.get(req.params.id)
 
     const phaseNames: Record<number, string> = {
       1: '开题',
@@ -88,7 +84,7 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
     md += `综合者：${debate.synthesizer}｜时间：${new Date(debate.created_at).toLocaleString('zh-CN')}\n\n---\n\n`
 
     let currentPhase = 0
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (msg.phase !== currentPhase) {
         currentPhase = msg.phase
         md += `## 第 ${currentPhase} 阶段：${phaseNames[currentPhase] ?? currentPhase}\n\n`
@@ -109,15 +105,12 @@ export function createRouter(cdp: CDPSession, wsClients: WsClients): Router {
   // DELETE /api/debates/:id — remove debate and all its messages/summary
   router.delete('/debates/:id', (req, res) => {
     const id = req.params.id
-    const row = db.prepare('SELECT status FROM debates WHERE id = ?').get(id) as { status: string } | undefined
-    if (!row) return res.status(404).json({ error: 'not found' })
-    if (row.status === 'running' || row.status === 'pending') {
+    const status = debates.getStatus(id)
+    if (!status) return res.status(404).json({ error: 'not found' })
+    if (status === 'running' || status === 'pending') {
       return res.status(409).json({ error: '进行中的辩论无法删除' })
     }
-    // No ON DELETE CASCADE in schema — delete children first
-    db.prepare('DELETE FROM messages WHERE debate_id = ?').run(id)
-    db.prepare('DELETE FROM summaries WHERE debate_id = ?').run(id)
-    db.prepare('DELETE FROM debates WHERE id = ?').run(id)
+    debates.delete(id)
     res.json({ ok: true })
   })
 

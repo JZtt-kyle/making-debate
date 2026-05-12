@@ -1,5 +1,6 @@
 import { Page } from 'playwright'
 import { SiteAdapter, ClaudeConfig, ModelConfig, waitFor } from './base.js'
+import { htmlToMarkdown } from '../markdown.js'
 
 // All Claude selectors — update here if UI changes
 // Verified against live claude.ai DOM on 2026-05-10
@@ -108,15 +109,18 @@ export class ClaudeAdapter implements SiteAdapter {
       SEL.responseSelector
     )
 
-    // getText: return the innerText of the LAST .font-claude-response element
-    // that appeared AFTER our message was sent
-    const getText = (): Promise<string> =>
+    // getHtml: outerHTML of the LAST .font-claude-response element that
+    // appeared AFTER our message was sent. We turn the HTML into Markdown
+    // server-side so structural elements (headings, lists, code, tables)
+    // survive into the UI.
+    const getHtml = (): Promise<string> =>
       this.page.evaluate(({ sel, baseline }) => {
         const els = document.querySelectorAll(sel)
-        // take the last element beyond the baseline
         const target = els[Math.max(els.length - 1, baseline)]
-        return (target as HTMLElement)?.innerText ?? ''
+        return (target as HTMLElement)?.outerHTML ?? ''
       }, { sel: SEL.responseSelector, baseline: baselineCount })
+
+    const getText = async (): Promise<string> => htmlToMarkdown(await getHtml())
 
     // Phase 1: wait for the new response element to appear (up to 30s)
     const deadline1 = Date.now() + 30_000

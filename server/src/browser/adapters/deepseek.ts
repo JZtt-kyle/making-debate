@@ -1,13 +1,18 @@
 import { Page } from 'playwright'
 import { SiteAdapter, DeepSeekConfig, ModelConfig, waitFor } from './base.js'
+import { htmlToMarkdown } from '../markdown.js'
 
 // All DeepSeek selectors — update here if UI changes
-// Toggle buttons verified against live chat.deepseek.com DOM on 2026-05-10
+// Verified against live chat.deepseek.com DOM on 2026-05-12
 const SEL = {
   newChatButton: 'button:has-text("New Chat"), [class*="newChat"], a:has-text("新对话"), button:has-text("新建对话")',
   // DeepSeek uses a <textarea> for input
   inputBox: 'textarea#chat-input, textarea[class*="chat"], textarea[class*="input"], textarea[placeholder]',
   sendButton: 'button[aria-label="send"], [class*="sendButton"]:not([class*="cancel"]), button[class*="send"]:not([class*="cancel"])',
+  // 快速模式/专家模式 radios live in a [role="radiogroup"]; each radio carries
+  // data-model-type="default" (fast) or "expert", with aria-checked reflecting state.
+  modeRadioFast: 'div[role="radio"][data-model-type="default"]',
+  modeRadioExpert: 'div[role="radio"][data-model-type="expert"]',
   // Feature toggle buttons in the toolbar below the input box
   // State: aria-pressed="true" or class ds-toggle-button--selected = currently active
   deepThinkBtn: 'div.ds-toggle-button[role="button"]:has-text("深度思考")',
@@ -50,14 +55,36 @@ export class DeepSeekAdapter implements SiteAdapter {
     }
   }
 
+  // Click the radio matching `mode` if it isn't already selected.
+  private async setModeRadio(mode: 'fast' | 'expert'): Promise<void> {
+    const sel = mode === 'expert' ? SEL.modeRadioExpert : SEL.modeRadioFast
+    const label = mode === 'expert' ? '专家模式' : '快速模式'
+    try {
+      const radio = this.page.locator(sel).first()
+      await radio.waitFor({ timeout: 5000 })
+      const checked = await radio.getAttribute('aria-checked').catch(() => null)
+      if (checked !== 'true') {
+        await radio.click()
+        await waitFor(500)
+        console.log(`[deepseek] selected mode: ${label}`)
+      } else {
+        console.log(`[deepseek] mode already ${label}, no change`)
+      }
+    } catch {
+      console.warn(`[deepseek] configure: cannot find mode radio "${label}" — skipping`)
+    }
+  }
+
   async configure(config: ModelConfig): Promise<void> {
     const cfg = config as DeepSeekConfig
     await waitFor(600)  // let input toolbar settle after newConversation
 
-    // "专家模式" = deepThink ON; "快速模式" = deepThink OFF
-    // In DeepSeek UI there is no separate R1/V3 selector — only the 深度思考 toggle
-    const wantDeepThink = cfg.mode === 'expert' || cfg.deepThink
-    await this.setToggle(SEL.deepThinkBtn, '深度思考', wantDeepThink)
+    // 快速模式/专家模式 is now a dedicated radiogroup, distinct from 深度思考.
+    await this.setModeRadio(cfg.mode)
+
+    // 深度思考 / 智能搜索 are independent toggles that may or may not be
+    // visible depending on mode; treat missing as best-effort.
+    await this.setToggle(SEL.deepThinkBtn, '深度思考', cfg.deepThink)
     await this.setToggle(SEL.smartSearchBtn, '智能搜索', cfg.smartSearch)
   }
 
@@ -102,8 +129,10 @@ export class DeepSeekAdapter implements SiteAdapter {
     const HARD_TIMEOUT = Date.now() + 5 * 60 * 1000
     const STABILITY_MS = 2500
 
-    // Returns [count-of-outermost, text-of-last-outermost]
+    // Returns [count-of-outermost, outerHTML-of-last-outermost]
     // DeepSeek nests ds-markdown inside ds-markdown; we only want top-level containers.
+    // HTML (not innerText) so we can run it through turndown server-side and
+    // preserve heading/list/table structure into the final markdown.
     const getState = (): Promise<[number, string]> =>
       this.page.evaluate((selectors) => {
         for (const sel of selectors) {
@@ -121,7 +150,7 @@ export class DeepSeekAdapter implements SiteAdapter {
           }
           if (outermost.length > 0) {
             const last = outermost[outermost.length - 1] as HTMLElement
-            return [outermost.length, last.innerText ?? ''] as [number, string]
+            return [outermost.length, last.outerHTML ?? ''] as [number, string]
           }
         }
         return [0, ''] as [number, string]
@@ -143,7 +172,8 @@ export class DeepSeekAdapter implements SiteAdapter {
     let lastChangeAt = Date.now()
 
     while (Date.now() < HARD_TIMEOUT) {
-      const [, current] = await getState()
+      const [, html] = await getState()
+      const current = htmlToMarkdown(html)
       if (current !== lastText) {
         const delta = current.slice(lastText.length)
         if (delta) onDelta(delta)

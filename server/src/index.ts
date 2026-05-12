@@ -9,8 +9,21 @@ import { createRouter } from './api/http.js'
 const PORT = Number(process.env.PORT ?? 3001)
 
 async function main() {
-  console.log('[server] Launching browser...')
-  const { port: cdpPort, isFirstRun } = await launchBrowser()
+  // Attach to an already-running browser when BROWSER_CDP_PORT is set
+  // (useful when a Chrome with the right profile is already open). Otherwise
+  // launch our own.
+  const existing = process.env.BROWSER_CDP_PORT
+  let cdpPort: number
+  let isFirstRun = false
+  if (existing) {
+    cdpPort = Number(existing)
+    console.log(`[server] Attaching to existing browser on CDP port ${cdpPort}`)
+  } else {
+    console.log('[server] Launching browser...')
+    const result = await launchBrowser()
+    cdpPort = result.port
+    isFirstRun = result.isFirstRun
+  }
 
   const cdp = new CDPSession()
   await cdp.connect(cdpPort)

@@ -26,8 +26,10 @@ export interface DebateState {
   error: string | null
 }
 
+// Phase 1 is conceptual "开题" with no model output; the first emitted phase
+// from the orchestrator is 2 (各自方案).
 const INITIAL: DebateState = {
-  phase: 1,
+  phase: 2,
   streams: { claude: [], chatgpt: [], deepseek: [] },
   summary: null,
   done: false,
@@ -84,8 +86,13 @@ function applyEvent(prev: DebateState, ev: WSEvent): DebateState {
       if (!ev.model || !ev.phase) return prev
       const modelStreams = [...(prev.streams[ev.model] ?? [])]
       const lastIdx = modelStreams.findLastIndex((s: ModelStream) => s.phase === ev.phase)
+      // Replace content with the authoritative final markdown — heals any
+      // streaming drift from non-monotonic intermediate snapshots.
+      const finalContent = ev.content ?? modelStreams[lastIdx]?.content ?? ''
       if (lastIdx >= 0) {
-        modelStreams[lastIdx] = { ...modelStreams[lastIdx], complete: true }
+        modelStreams[lastIdx] = { ...modelStreams[lastIdx], content: finalContent, complete: true }
+      } else {
+        modelStreams.push({ phase: ev.phase!, content: finalContent, complete: true })
       }
       return { ...prev, streams: { ...prev.streams, [ev.model]: modelStreams } }
     }

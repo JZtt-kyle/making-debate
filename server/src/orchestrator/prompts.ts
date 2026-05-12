@@ -1,4 +1,5 @@
-export type ModelName = 'claude' | 'chatgpt' | 'deepseek'
+import type { ModelName } from '../browser/adapters/index.js'
+export type { ModelName }
 
 // Anonymization labels for Phase 3 (Karpathy-style — prevents stylistic bias / sycophancy)
 // Fixed order = the same proposal always maps to the same label across all evaluators.
@@ -78,10 +79,12 @@ FINAL RANKING:
 }
 
 // Parse "FINAL RANKING:" section. Returns ordered labels (best→worst) or null if not found.
+// Turndown escapes "1." → "1\." when it appears inside a paragraph (to prevent
+// re-rendering as an ordered list); we strip those escapes before matching.
 export function parseRanking(text: string): AnonLabel[] | null {
   const idx = text.indexOf('FINAL RANKING')
   if (idx < 0) return null
-  const tail = text.slice(idx)
+  const tail = text.slice(idx).replace(/\\\./g, '.')
   const matches = Array.from(tail.matchAll(/\d+\.\s*方案\s*([甲乙丙])/g))
   if (matches.length === 0) return null
   const labels = matches.map(m => m[1] as AnonLabel)
@@ -191,4 +194,15 @@ ${critiques}${rankingSection}
 
 用中文输出，结构清晰。
 `.trim()
+}
+
+// Parse the Phase 4 synthesizer output into the two sections defined by PHASE4_PROMPT.
+// Lives next to the prompt so format changes only touch one file.
+export function parsePhase4Output(text: string): { comparison: string; finalProposal: string } {
+  const comparisonMatch = text.match(/(?:##\s*)?一[、,，]观点异同对照([\s\S]*?)(?:##\s*)?二[、,，]/i)
+  const proposalMatch = text.match(/(?:##\s*)?二[、,，]迭代后的综合方案([\s\S]*?)$/i)
+  return {
+    comparison: comparisonMatch?.[1]?.trim() ?? text,
+    finalProposal: proposalMatch?.[1]?.trim() ?? '',
+  }
 }

@@ -7,29 +7,20 @@
  *
  * If the server is not running, pass --launch to start a browser first.
  */
-import { chromium } from 'playwright'
 import { launchBrowser } from './browser/launcher.js'
 import { CDPSession } from './browser/cdp.js'
-import { ClaudeAdapter } from './browser/adapters/claude.js'
-import { ChatGPTAdapter } from './browser/adapters/chatgpt.js'
-import { DeepSeekAdapter } from './browser/adapters/deepseek.js'
-import { SiteAdapter } from './browser/adapters/base.js'
+import { ADAPTER_REGISTRY, MODELS } from './browser/adapters/index.js'
+import type { ModelName } from './browser/adapters/index.js'
 
 const args = process.argv.slice(2)
-const target = (args.find(a => !a.startsWith('--')) ?? 'claude') as 'claude' | 'chatgpt' | 'deepseek'
+const target = (args.find(a => !a.startsWith('--')) ?? 'claude') as ModelName
 const shouldLaunch = args.includes('--launch')
 
-const adapterMap: Record<string, SiteAdapter> = {
-  claude: new ClaudeAdapter(),
-  chatgpt: new ChatGPTAdapter(),
-  deepseek: new DeepSeekAdapter(),
-}
-
-const adapter = adapterMap[target]
-if (!adapter) {
-  console.error('Unknown target:', target, '— use claude, chatgpt, or deepseek')
+if (!(target in ADAPTER_REGISTRY)) {
+  console.error('Unknown target:', target, `— use one of: ${MODELS.join(', ')}`)
   process.exit(1)
 }
+const adapter = ADAPTER_REGISTRY[target].ctor()
 
 console.log(`[smoke] Target: ${target}`)
 
@@ -53,15 +44,12 @@ if (shouldLaunch) {
 
 await cdp.connect(cdpPort)
 
-const siteMap: Record<string, 'claude' | 'chatgpt' | 'deepseek'> = {
-  claude: 'claude', chatgpt: 'chatgpt', deepseek: 'deepseek',
-}
-const page = await cdp.ensurePage(siteMap[target])
+const page = await cdp.ensurePage(target)
 adapter.setPage(page)
 await adapter.ensureReady()
 
 // Quick login check
-const loggedIn = await cdp.checkLoginStatus(siteMap[target])
+const loggedIn = await cdp.checkLoginStatus(target)
 if (!loggedIn) {
   console.error(`[smoke] ❌ Not logged in to ${target}. Please log in and retry.`)
   await cdp.disconnect()
