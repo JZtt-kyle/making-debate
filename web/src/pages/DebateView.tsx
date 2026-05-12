@@ -150,8 +150,19 @@ export default function DebateView() {
     : ''
   const synthesizer = debate?.synthesizer as ModelName | undefined
 
+  // Download via a temporary <a download> click. window.open(url, '_blank')
+  // sometimes loses the Content-Disposition filename on Chrome and produces
+  // an extensionless file ("export"); the download attribute pins the name.
   const exportMd = () => {
-    if (id) window.open(`/api/debates/${id}/export`, '_blank')
+    if (!id) return
+    const filename = `debate-${id.slice(0, 8)}.md`
+    const a = document.createElement('a')
+    a.href = `/api/debates/${id}/export`
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
 
   const refetch = useRefetchMessage(id, ({ streams, summary }) => {
